@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+
+/*
+ * Mobile first. Most of these worksheets get filled in on a phone, so the base
+ * sizes are phone sizes and the wider layout is the exception.
+ */
+:root {
+  --page: #fbf8f4;
+  --ink: #1c1917;
+  --ink-soft: #57534e;
+  --line: #e7e0d7;
+  --card: #ffffff;
+  /* Replaced per person on the worksheet wrapper. */
+  --accent: #334155;
+}
+
+html,
+body {
+  background: var(--page);
+  color: var(--ink);
+}
+
+body {
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  /* Room for the sticky footer buttons on a phone. */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Never shrink the tap target below the accessible minimum. */
+button,
+[role='button'] {
+  min-height: 44px;
+}
+
+/* Inputs at 16px or larger, so iOS does not zoom the page on focus. */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

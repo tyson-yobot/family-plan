@@ -1,0 +1,10 @@
+{
+  "name": "family-plan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private family planning tool. Phase 1a worksheets.",
+  "scripts": {
+    "check:worksheet-ids": "node scripts/check-worksheet-ids.mjs",
+    "make:icons": "node scripts/make-icons.mjs"
+  }
+}
