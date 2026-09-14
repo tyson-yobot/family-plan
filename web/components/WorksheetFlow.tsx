@@ -78,6 +78,13 @@ export function WorksheetFlow({ token }: { token: string }) {
   /** True when this page picked up a half-finished worksheet for this month. */
   const [resumedThisMonth, setResumedThisMonth] = useState(false);
   /**
+   * Whether the person has actually answered something. The worksheet fills in
+   * what carries over from last time as soon as it opens, so without this the
+   * autosave below would write a draft for anyone who merely opened their link,
+   * and the parent view would report them as having started.
+   */
+  const [touched, setTouched] = useState(false);
+  /**
    * Bumped whenever the answers are cleared and started again. Without it the
    * effect below runs once and never again, so clearing the answers also threw
    * away everything carried over from last time: the name of their own area,
@@ -195,6 +202,8 @@ export function WorksheetFlow({ token }: { token: string }) {
    * to go. Leaving it up tells them something is still wrong when it is not,
    * and it also hides the short-answer nudge behind it.
    */
+  const markTouched = useCallback(() => setTouched(true), []);
+
   const clearProblem = useCallback((key: string) => {
     setProblems((current) => {
       if (!(key in current)) return current;
@@ -208,8 +217,9 @@ export function WorksheetFlow({ token }: { token: string }) {
     (key: string, value: unknown) => {
       setPayload((current) => ({ ...current, [key]: value }));
       clearProblem(key);
+      markTouched();
     },
-    [clearProblem],
+    [clearProblem, markTouched],
   );
 
   const setArea = useCallback(
@@ -222,8 +232,9 @@ export function WorksheetFlow({ token }: { token: string }) {
         },
       }));
       clearProblem(`area.${areaId}.${part}`);
+      markTouched();
     },
-    [clearProblem],
+    [clearProblem, markTouched],
   );
 
   const setMyArea = useCallback(
@@ -233,8 +244,9 @@ export function WorksheetFlow({ token }: { token: string }) {
         my_area: { ...(current.my_area ?? {}), [part]: value },
       }));
       clearProblem(`my_area.${part}`);
+      markTouched();
     },
-    [clearProblem],
+    [clearProblem, markTouched],
   );
 
   const setGoal = useCallback((row: number, part: string, value: string) => {
@@ -245,7 +257,8 @@ export function WorksheetFlow({ token }: { token: string }) {
       return { ...current, goals };
     });
     clearProblem(`goal.${row}.${part}`);
-  }, [clearProblem]);
+    markTouched();
+  }, [clearProblem, markTouched]);
 
   const setGoalStatus = useCallback((row: number, part: 'status' | 'reflection', value: string) => {
     setPayload((current) => {
@@ -256,7 +269,8 @@ export function WorksheetFlow({ token }: { token: string }) {
       return { ...current, goal_status: list };
     });
     if (part === 'status') clearProblem(`status.${row}`);
-  }, [clearProblem]);
+    markTouched();
+  }, [clearProblem, markTouched]);
 
   /** Every field on this step that gets the short-answer nudge. */
   const nudgeKeysFor = useCallback(
@@ -452,12 +466,12 @@ export function WorksheetFlow({ token }: { token: string }) {
    */
   useEffect(() => {
     if (loadState !== 'ready' || staleDraft || submitted || !startedAt) return;
-    if (Object.keys(payload).length === 0) return;
+    if (!touched) return;
     const timer = window.setTimeout(() => {
       void persist(payload, stepIndex);
     }, 2000);
     return () => window.clearTimeout(timer);
-  }, [loadState, payload, persist, staleDraft, startedAt, stepIndex, submitted]);
+  }, [loadState, payload, persist, staleDraft, startedAt, stepIndex, submitted, touched]);
 
   const onSubmit = useCallback(async () => {
     if (!info) return;
