@@ -173,10 +173,12 @@ function PersonRow({
 }) {
   const accent = accentFor(entry.slug);
   let status: string;
+  // Nothing here knows whether somebody opened their link, only whether they
+  // have written anything, so the wording says what is actually known.
   if (entry.submitted_at) status = `Done, ${dayAndMonth(entry.submitted_at)}`;
   else if (entry.started_at) status = 'Started, not finished yet';
-  else if (entry.total_submissions === 0) status = 'Has not opened it yet';
-  else status = 'Not started this month';
+  else if (entry.total_submissions === 0) status = 'Nothing from them yet';
+  else status = 'Nothing this month yet';
 
   return (
     <button
