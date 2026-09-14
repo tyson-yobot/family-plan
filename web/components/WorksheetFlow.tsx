@@ -164,6 +164,14 @@ export function WorksheetFlow({ token }: { token: string }) {
         next.my_area = { ...(next.my_area ?? {}), name: info.my_area };
         changed = true;
       }
+      // Each goal is owned by the person writing it unless they change it. The
+      // default has to be a real stored answer, not just something on screen:
+      // showing a name in the box while the answer underneath was empty made
+      // the worksheet refuse to move on over a field that looked filled in.
+      if (info.template_type === 'adult' && !Array.isArray(next.goals)) {
+        next.goals = [0, 1, 2].map(() => ({ owner: info.name }));
+        changed = true;
+      }
       return changed ? next : current;
     });
   }, [info, staleDraft]);
@@ -882,7 +890,7 @@ function SectionView({
                       />
                       <TextAnswer
                         label="Owner"
-                        value={goal.owner ?? info.name}
+                        value={goal.owner ?? ''}
                         onChange={(value) => setGoal(row, 'owner', value)}
                         problem={problems[`goal.${row}.owner`]}
                       />
