@@ -4,8 +4,9 @@ Last updated 2026-09-14.
 
 ## Where it is
 
-Phase 1a is built, deployed and verified. Phase 2, the parent view, is in
-progress in the same session.
+Phase 1a and Phase 2 are both built, deployed and verified against the running
+system. No test data is left in the database: five people, no drafts, no
+submissions.
 
 ## Live addresses
 
@@ -28,14 +29,23 @@ directory `/api`. The Vercel project builds from root directory `web`.
 ## What is done
 
 Phase 1a: three worksheets (adult, teen, young adult), server-side validation of
-all three shapes, drafts that save on every section, the stale-draft choice, the
-review screen, the confirmation echoes, five private links with QR codes, and a
-Progressive Web App that installs to a phone home screen.
+all three shapes, answers that save as they are written, the stale-draft choice,
+the review screen, the confirmation echoes, five private links with QR codes,
+and a Progressive Web App that installs to a phone home screen.
+
+Phase 2: a read-only parent view at `/d/<token>`, one link each for Tyson and
+Danyell. Who is done this month, everybody's history, and every answer laid out
+in the order it was written. It cannot change or delete anything.
 
 ## What is deliberately not built
 
-No login. No email or reminders. No chore integration. No scheduling engine.
-Quarterly review timing is a later, dashboard-driven idea and is not here.
+No email, no reminders, no chore integration, no scheduling engine. Quarterly
+review timing is a later idea and is not here.
+
+There is no password anywhere. Both the worksheets and the parent view are
+reached by an unguessable link, which is the same model throughout rather than
+two different ones. A parent link reads everybody, so it matters more than the
+others.
 
 ## Things to know before changing anything
 

@@ -98,9 +98,27 @@ drift you get a worksheet that can be filled in and then refuses to submit.
 from the repo root compares them. It is run by hand. Nothing enforces it in
 either deploy, and that is a real gap rather than a covered one.
 
+## The parent view
+
+Phase 2. `https://<site>/d/<token>`, one link each for Tyson and Danyell,
+created by:
+
+    cd api
+    WEB_BASE_URL=https://<site> npx tsx src/scripts/seed-dashboard.ts
+
+It opens on the five people and this month, gives each person's history, and
+lays out every answer in the order it was written. It is read only: nothing in
+it can change or delete what anybody wrote.
+
+A parent link reads everybody's answers, which makes it the one link here that
+really matters. It is kept in its own table, separate from the people who fill
+worksheets in, so a worksheet token can never be used as a parent one.
+
 ## Deliberately not built yet
 
-Phase 1a is worksheets and storage only. There is no login, no dashboard, no
-email, no reminders, no chore integration and no scheduling engine. Quarterly
-review timing exists in the plan as a later dashboard-driven idea and is not
-implemented here.
+There is no email, no reminders, no chore integration and no scheduling engine.
+Quarterly review timing is a later idea and is not implemented.
+
+There is no password anywhere, on either half. An unguessable link is the whole
+of the access control, which is the right trade for five people in one house
+and the wrong one for anything bigger.
