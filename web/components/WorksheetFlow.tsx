@@ -34,7 +34,14 @@ interface Step {
 function monthName(cycleLabel: string): string {
   const [year, month] = cycleLabel.split('-').map(Number);
   if (!year || !month) return cycleLabel;
-  const formatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
+  // The date is built in UTC, so it has to be read back in UTC. Formatting it
+  // in the phone's own timezone turns the first of the month into the last day
+  // of the month before, anywhere west of Greenwich.
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
   return formatter.format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
@@ -150,23 +157,52 @@ export function WorksheetFlow({ token }: { token: string }) {
     });
   }, [info, staleDraft]);
 
-  const setValue = useCallback((key: string, value: unknown) => {
-    setPayload((current) => ({ ...current, [key]: value }));
+  /**
+   * Once someone answers a field that was flagged as missing, the message has
+   * to go. Leaving it up tells them something is still wrong when it is not,
+   * and it also hides the short-answer nudge behind it.
+   */
+  const clearProblem = useCallback((key: string) => {
+    setProblems((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   }, []);
 
-  const setArea = useCallback((areaId: string, part: 'score' | 'reason', value: unknown) => {
-    setPayload((current) => ({
-      ...current,
-      areas: { ...(current.areas ?? {}), [areaId]: { ...(current.areas?.[areaId] ?? {}), [part]: value } },
-    }));
-  }, []);
+  const setValue = useCallback(
+    (key: string, value: unknown) => {
+      setPayload((current) => ({ ...current, [key]: value }));
+      clearProblem(key);
+    },
+    [clearProblem],
+  );
 
-  const setMyArea = useCallback((part: 'name' | 'score' | 'reason', value: unknown) => {
-    setPayload((current) => ({
-      ...current,
-      my_area: { ...(current.my_area ?? {}), [part]: value },
-    }));
-  }, []);
+  const setArea = useCallback(
+    (areaId: string, part: 'score' | 'reason', value: unknown) => {
+      setPayload((current) => ({
+        ...current,
+        areas: {
+          ...(current.areas ?? {}),
+          [areaId]: { ...(current.areas?.[areaId] ?? {}), [part]: value },
+        },
+      }));
+      clearProblem(`area.${areaId}.${part}`);
+    },
+    [clearProblem],
+  );
+
+  const setMyArea = useCallback(
+    (part: 'name' | 'score' | 'reason', value: unknown) => {
+      setPayload((current) => ({
+        ...current,
+        my_area: { ...(current.my_area ?? {}), [part]: value },
+      }));
+      clearProblem(`my_area.${part}`);
+    },
+    [clearProblem],
+  );
 
   const setGoal = useCallback((row: number, part: string, value: string) => {
     setPayload((current) => {
@@ -175,7 +211,8 @@ export function WorksheetFlow({ token }: { token: string }) {
       goals[row] = { ...goals[row], [part]: value };
       return { ...current, goals };
     });
-  }, []);
+    clearProblem(`goal.${row}.${part}`);
+  }, [clearProblem]);
 
   const setGoalStatus = useCallback((row: number, part: 'status' | 'reflection', value: string) => {
     setPayload((current) => {
@@ -185,7 +222,8 @@ export function WorksheetFlow({ token }: { token: string }) {
       list[row] = { ...list[row], [part]: value } as GoalStatusEntry;
       return { ...current, goal_status: list };
     });
-  }, []);
+    if (part === 'status') clearProblem(`status.${row}`);
+  }, [clearProblem]);
 
   /** Every field on this step that gets the short-answer nudge. */
   const nudgeKeysFor = useCallback(
