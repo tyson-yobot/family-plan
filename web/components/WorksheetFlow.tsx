@@ -65,6 +65,14 @@ export function WorksheetFlow({ token }: { token: string }) {
   const [payload, setPayload] = useState<Payload>({});
   const [startedAt, setStartedAt] = useState<string>('');
   const [stepIndex, setStepIndex] = useState(0);
+  /**
+   * Whether their own note from last time is part of this run. Decided once,
+   * when the worksheet opens, and then left alone. If this were recomputed from
+   * the answers so far, the list of steps would change shape the moment the
+   * first answer was saved and every step index after it would shift by one,
+   * which silently skipped the intro screen.
+   */
+  const [showNote, setShowNote] = useState(false);
 
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [blurred, setBlurred] = useState<Record<string, true>>({});
@@ -93,16 +101,20 @@ export function WorksheetFlow({ token }: { token: string }) {
 
         setInfo(loaded);
         if (draft && draft.cycle_label === loaded.current_cycle_label) {
-          // Same month, so pick up exactly where they left off.
+          // Same month, so pick up exactly where they left off, with the same
+          // shape of worksheet they were part way through.
+          const ui = (draft.payload as Payload)?.[UI_KEY];
           setPayload(draft.payload ?? {});
           setStartedAt(draft.started_at);
-          setStepIndex(Number((draft.payload as Payload)?.[UI_KEY]?.step ?? 0));
+          setShowNote(Boolean(ui?.showNote));
+          setStepIndex(Number(ui?.step ?? 0));
         } else if (draft) {
           // A draft from a previous month. Never resumed and never discarded
           // without asking.
           setStaleDraft(draft);
         } else {
           setStartedAt(new Date().toISOString());
+          setShowNote(Boolean(loaded.note_to_self));
         }
         setLoadState('ready');
       } catch (error) {
@@ -118,20 +130,19 @@ export function WorksheetFlow({ token }: { token: string }) {
 
   const worksheet = info ? WORKSHEETS[info.template_type] : null;
   const accent = info ? accentFor(info.slug) : '#334155';
-  const resuming = startedAt !== '' && Boolean((payload as Payload)?.[UI_KEY]);
 
   const steps: Step[] = useMemo(() => {
     if (!info || !worksheet) return [];
     const list: Step[] = [];
-    // Their own note from last time comes before anything else, but only when
-    // they are opening a new worksheet rather than returning to this one.
-    if (info.note_to_self && !resuming) list.push({ kind: 'note' });
+    // Their own note from last time comes before anything else, on a worksheet
+    // they are opening rather than returning to.
+    if (showNote && info.note_to_self) list.push({ kind: 'note' });
     list.push({ kind: 'intro' });
     list.push({ kind: 'loop' });
     worksheet.sections.forEach((_, index) => list.push({ kind: 'section', index }));
     list.push({ kind: 'review' });
     return list;
-  }, [info, worksheet, resuming]);
+  }, [info, worksheet, showNote]);
 
   const step = steps[Math.min(stepIndex, Math.max(steps.length - 1, 0))];
 
@@ -317,7 +328,7 @@ export function WorksheetFlow({ token }: { token: string }) {
   const persist = useCallback(
     async (nextPayload: Payload, nextStep: number) => {
       if (!info || !startedAt) return;
-      const toSave = { ...nextPayload, [UI_KEY]: { step: nextStep } };
+      const toSave = { ...nextPayload, [UI_KEY]: { step: nextStep, showNote } };
       try {
         await saveDraft(token, {
           cycle_label: info.current_cycle_label,
@@ -331,7 +342,7 @@ export function WorksheetFlow({ token }: { token: string }) {
         );
       }
     },
-    [info, startedAt, token],
+    [info, showNote, startedAt, token],
   );
 
   const goTo = useCallback((next: number) => {
@@ -364,12 +375,12 @@ export function WorksheetFlow({ token }: { token: string }) {
 
     const nextStep = Math.min(stepIndex + 1, steps.length - 1);
     setBusy(true);
-    const nextPayload = { ...payload, [UI_KEY]: { step: nextStep } };
+    const nextPayload = { ...payload, [UI_KEY]: { step: nextStep, showNote } };
     setPayload(nextPayload);
     await persist(payload, nextStep);
     setBusy(false);
     goTo(nextStep);
-  }, [checkStep, goTo, nudgeKeysFor, payload, persist, step, stepIndex, steps.length]);
+  }, [checkStep, goTo, nudgeKeysFor, payload, persist, showNote, step, stepIndex, steps.length]);
 
   const onBack = useCallback(() => {
     goTo(Math.max(stepIndex - 1, 0));
@@ -449,6 +460,9 @@ export function WorksheetFlow({ token }: { token: string }) {
             onClick={() => {
               setPayload(staleDraft.payload ?? {});
               setStartedAt(staleDraft.started_at);
+              // Restarted from the top, so their note from last time belongs
+              // at the front of this run just as it would on a fresh one.
+              setShowNote(Boolean(info.note_to_self));
               setStepIndex(0);
               setStaleDraft(null);
             }}
@@ -461,6 +475,7 @@ export function WorksheetFlow({ token }: { token: string }) {
             onClick={() => {
               setPayload({});
               setStartedAt(new Date().toISOString());
+              setShowNote(Boolean(info.note_to_self));
               setStepIndex(0);
               setStaleDraft(null);
             }}
