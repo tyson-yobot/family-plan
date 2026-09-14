@@ -3,6 +3,10 @@ export interface FormInfo {
   slug: string;
   template_type: 'adult' | 'teen' | 'young_adult';
   current_cycle_label: string;
+  /** Set when this month is already finished, so it is not offered blank again. */
+  submitted_this_cycle: { id: string; submitted_at: string } | null;
+  /** Whether they have ever finished one, which is not the same question. */
+  has_earlier_submissions: boolean;
   previous_goals: string[];
   my_area: string | null;
   last_cycle_status: GoalStatusEntry[] | null;

@@ -55,6 +55,13 @@ export function validatePayload(
   previousGoals: string[],
 ): void {
   const template = TEMPLATES[templateName];
+  if (!template) {
+    // Only reachable if a row carries a template nobody wrote a worksheet for.
+    // Without this the next line reads a property of undefined and the whole
+    // request fails as a 500, which reads like the server is broken rather
+    // than like the data is wrong.
+    fail(`There is no worksheet for the template type "${templateName}".`);
+  }
   const body = asRecord(payload, 'The worksheet answers');
 
   // Closing the loop, where there is a previous cycle to close.

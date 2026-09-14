@@ -11,9 +11,13 @@ import { ValidationError, validatePayload } from './lib/validate.js';
 import { registerDashboardRoutes } from './routes/dashboard.js';
 
 /**
- * Access tokens sit in the URL, so the URL must never reach a log line. Fastify
- * logs every request path by default, which on Railway would put five permanent
- * private links into the log stream.
+ * Keeps access tokens out of THIS service's log lines. Fastify logs every
+ * request path by default, which on Railway would put every permanent private
+ * link into the log stream.
+ *
+ * It is worth being exact about what this does not cover: the page the family
+ * opens is served by Vercel, and its access log records /f/<token> in full.
+ * Nothing in this repository can redact that. This guard is about Railway.
  */
 function redactPath(url: string): string {
   return url.replace(/\/api\/(form|dashboard)\/[^/?]+/, '/api/$1/[token]');
@@ -84,12 +88,25 @@ app.get<{ Params: TokenParams }>('/api/form/:token', async (request, reply) => {
     ? carryForward(person.templateType as TemplateName, previous.payload)
     : EMPTY_CARRIED_FORWARD;
 
+  const cycle = currentCycleLabel();
+  // Whether this month is already finished. Without this the worksheet reopens
+  // blank after a submit, with nothing to say it has already been done, and a
+  // second row lands for the same month.
+  const alreadyDone =
+    previous && previous.cycleLabel === cycle
+      ? { id: previous.id, submitted_at: previous.submittedAt.toISOString() }
+      : null;
+
   return {
     name: person.name,
     // The worksheet is coloured per person, so the page needs to know who this is.
     slug: person.slug,
     template_type: person.templateType,
-    current_cycle_label: currentCycleLabel(),
+    current_cycle_label: cycle,
+    submitted_this_cycle: alreadyDone,
+    // Whether they have ever finished one, which is a different question from
+    // whether they set a goal last time.
+    has_earlier_submissions: Boolean(previous),
     previous_goals: carried.previousGoals,
     my_area: carried.myArea,
     last_cycle_status: carried.lastCycleStatus,
@@ -128,13 +145,16 @@ app.put<{ Params: TokenParams; Body: DraftBody }>(
     const person = await findPerson(request.params.token);
     if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
 
-    const { cycle_label: cycleLabel, payload, started_at: startedAt } = request.body ?? {};
-    if (typeof cycleLabel !== 'string' || cycleLabel === '') {
-      return reply.code(400).send({ error: 'cycle_label is required.' });
-    }
+    const { payload, started_at: startedAt } = request.body ?? {};
     if (typeof payload !== 'object' || payload === null) {
       return reply.code(400).send({ error: 'payload is required.' });
     }
+    // The month is worked out here and the body's copy is ignored. A tab left
+    // open across midnight on the last day of a month would otherwise keep
+    // stamping the old month onto everything it saved, and a hand-written
+    // request could stamp any month it liked, which is exactly how a stale
+    // draft gets silently resumed or a live one made to look stale.
+    const cycleLabel = currentCycleLabel();
     const started = typeof startedAt === 'string' ? new Date(startedAt) : new Date(NaN);
     if (Number.isNaN(started.getTime())) {
       return reply.code(400).send({ error: 'started_at must be a timestamp.' });
@@ -164,14 +184,13 @@ app.post<{ Params: TokenParams; Body: DraftBody }>(
     const person = await findPerson(request.params.token);
     if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
 
-    const { cycle_label: cycleLabel, payload, started_at: startedAt } = request.body ?? {};
-    if (typeof cycleLabel !== 'string' || cycleLabel === '') {
-      return reply.code(400).send({ error: 'cycle_label is required.' });
-    }
+    const { payload, started_at: startedAt } = request.body ?? {};
     const started = typeof startedAt === 'string' ? new Date(startedAt) : new Date(NaN);
     if (Number.isNaN(started.getTime())) {
       return reply.code(400).send({ error: 'started_at must be a timestamp.' });
     }
+    // Worked out here, not taken from the body. Same reasoning as the draft.
+    const cycleLabel = currentCycleLabel();
 
     const templateName = person.templateType as TemplateName;
     const previous = await latestSubmission(person.id);
@@ -188,20 +207,27 @@ app.post<{ Params: TokenParams; Body: DraftBody }>(
       throw error;
     }
 
-    const inserted = await db
-      .insert(submissions)
-      .values({
-        personId: person.id,
-        templateType: person.templateType,
-        cycleLabel,
-        payload: payload as object,
-        startedAt: started,
-      })
-      .returning({ submittedAt: submissions.submittedAt });
+    // One transaction: either the answers are recorded and the draft is gone,
+    // or neither happened. Two separate statements could record the submission
+    // and leave the draft behind, so the person resumes a worksheet they have
+    // already handed in and submits it twice.
+    const submittedAt = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(submissions)
+        .values({
+          personId: person.id,
+          templateType: person.templateType,
+          cycleLabel,
+          payload: payload as object,
+          startedAt: started,
+        })
+        .returning({ submittedAt: submissions.submittedAt });
 
-    await db.delete(drafts).where(eq(drafts.personId, person.id));
+      await tx.delete(drafts).where(eq(drafts.personId, person.id));
+      return inserted[0].submittedAt;
+    });
 
-    return { ok: true, submitted_at: inserted[0].submittedAt.toISOString() };
+    return { ok: true, submitted_at: submittedAt.toISOString() };
   },
 );
 

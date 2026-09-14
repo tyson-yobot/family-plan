@@ -73,6 +73,8 @@ export function WorksheetFlow({ token }: { token: string }) {
    * which silently skipped the intro screen.
    */
   const [showNote, setShowNote] = useState(false);
+  /** Set only when someone deliberately redoes a month they have already sent. */
+  const [startingAgain, setStartingAgain] = useState(false);
 
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [blurred, setBlurred] = useState<Record<string, true>>({});
@@ -333,9 +335,18 @@ export function WorksheetFlow({ token }: { token: string }) {
     [info, payload, worksheet],
   );
 
+  /** Returns whether the answers actually reached the server. */
   const persist = useCallback(
-    async (nextPayload: Payload, nextStep: number) => {
-      if (!info || !startedAt) return;
+    async (nextPayload: Payload, nextStep: number): Promise<boolean> => {
+      if (!info || !startedAt) {
+        // Not a silent no-op. Saying nothing here looks exactly like a save
+        // that worked, and the answers would be gone with the tab.
+        setSaveProblem(
+          'Your answers could not be saved because this page did not open properly. ' +
+            'Open your link again before writing any more.',
+        );
+        return false;
+      }
       const toSave = { ...nextPayload, [UI_KEY]: { step: nextStep, showNote } };
       try {
         await saveDraft(token, {
@@ -344,10 +355,13 @@ export function WorksheetFlow({ token }: { token: string }) {
           started_at: startedAt,
         });
         setSaveProblem('');
+        return true;
       } catch {
         setSaveProblem(
-          'Your answers are on this screen but could not be saved just now. Try continuing again in a moment.',
+          'Your answers could not be saved just now. They are still on this screen. ' +
+            'Press continue again in a moment.',
         );
+        return false;
       }
     },
     [info, showNote, startedAt, token],
@@ -392,14 +406,29 @@ export function WorksheetFlow({ token }: { token: string }) {
     setBusy(true);
     const nextPayload = { ...payload, [UI_KEY]: { step: nextStep, showNote } };
     setPayload(nextPayload);
-    await persist(payload, nextStep);
+    const saved = await persist(nextPayload, nextStep);
     setBusy(false);
-    goTo(nextStep);
+    // Only move on once the answers are safely stored. Advancing anyway turns
+    // "press continue again" into a save of the next step rather than a retry
+    // of the one that failed, and the failed step's answers are then lost with
+    // the tab.
+    if (saved) goTo(nextStep);
   }, [checkStep, goTo, nudgeKeysFor, payload, persist, showNote, step, stepIndex, steps.length]);
 
-  const onBack = useCallback(() => {
-    goTo(Math.max(stepIndex - 1, 0));
-  }, [goTo, stepIndex]);
+  const onBack = useCallback(async () => {
+    // Going back saves too. Editing an earlier section and then leaving used to
+    // discard the edit, while the page still showed it.
+    const previousStep = Math.max(stepIndex - 1, 0);
+    setBusy(true);
+    await persist(payload, previousStep);
+    setBusy(false);
+    goTo(previousStep);
+  }, [goTo, payload, persist, stepIndex]);
+
+  /** Saves without moving, for answers written on the review screen. */
+  const saveInPlace = useCallback(async () => {
+    await persist(payload, stepIndex);
+  }, [payload, persist, stepIndex]);
 
   const onSubmit = useCallback(async () => {
     if (!info) return;
@@ -503,7 +532,13 @@ export function WorksheetFlow({ token }: { token: string }) {
   }
 
   if (submitted) {
-    const doneGoal = (info.last_cycle_status ?? []).find((entry) => entry.status === 'Done');
+    // The statuses they just filled in are the ones that describe last
+    // cycle's goals, so they are what "last time" means here. info.last_cycle_status
+    // is one cycle older again, and is only a fallback.
+    const closedThisTime: GoalStatusEntry[] = Array.isArray(payload.goal_status)
+      ? payload.goal_status
+      : (info.last_cycle_status ?? []);
+    const doneGoal = closedThisTime.find((entry) => entry.status === 'Done');
     return (
       <Shell info={info} accent={accent} progress={null}>
         <h1 className="text-[22px] font-semibold leading-tight">Submitted. Thank you.</h1>
@@ -517,6 +552,43 @@ export function WorksheetFlow({ token }: { token: string }) {
             Last time, you also did this on your own: {info.last_initiative_note}
           </p>
         ) : null}
+      </Shell>
+    );
+  }
+
+  // Already finished this month. Without this the worksheet reopens blank, with
+  // nothing to say it is done, and filling it in again quietly files a second
+  // set of answers for the same month.
+  if (info.submitted_this_cycle && !startingAgain) {
+    return (
+      <Shell info={info} accent={accent} progress={null}>
+        <h1 className="text-[22px] font-semibold leading-tight">
+          {monthName(info.current_cycle_label)} is done
+        </h1>
+        <p className="mt-4 text-[15px] leading-relaxed text-[var(--ink-soft)]">
+          You sent this month&apos;s check-in on{' '}
+          {new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'long' }).format(
+            new Date(info.submitted_this_cycle.submitted_at),
+          )}
+          . There is nothing else to do until next month.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setStartingAgain(true);
+            setPayload({});
+            setStartedAt(new Date().toISOString());
+            setShowNote(false);
+            setStepIndex(0);
+          }}
+          className="mt-6 text-[15px] font-semibold underline"
+          style={{ color: accent }}
+        >
+          Fill this month in again
+        </button>
+        <p className="mt-2 text-[13px] leading-relaxed text-[var(--ink-soft)]">
+          Only if you want to change what you sent. Your first answers are kept either way.
+        </p>
       </Shell>
     );
   }
@@ -613,8 +685,9 @@ export function WorksheetFlow({ token }: { token: string }) {
             <div>
               <h1 className="text-[22px] font-semibold leading-tight">Before you start</h1>
               <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
-                This is your first one, so there is nothing to look back on yet. Next time there
-                will be.
+                {info.has_earlier_submissions
+                  ? 'There is no goal to look back on, because none was written down last time. Writing one down this month gives you something to check against next month.'
+                  : 'This is your first one, so there is nothing to look back on yet. Next time there will be.'}
               </p>
             </div>
           )}
@@ -653,6 +726,7 @@ export function WorksheetFlow({ token }: { token: string }) {
           onEdit={(target) => goTo(target)}
           steps={steps}
           onNoteChange={(value) => setValue('note_to_self', value)}
+          onNoteBlur={saveInPlace}
         />
       ) : null}
 
@@ -971,6 +1045,7 @@ function ReviewView({
   onEdit,
   steps,
   onNoteChange,
+  onNoteBlur,
 }: {
   info: FormInfo;
   payload: Payload;
@@ -978,6 +1053,7 @@ function ReviewView({
   onEdit: (stepIndex: number) => void;
   steps: Step[];
   onNoteChange: (value: string) => void;
+  onNoteBlur: () => void;
 }) {
   const worksheet = WORKSHEETS[info.template_type];
   const loopStepIndex = steps.findIndex((step) => step.kind === 'loop');
@@ -1119,6 +1195,7 @@ function ReviewView({
           label={NOTE_TO_SELF_LABEL}
           value={payload.note_to_self ?? ''}
           onChange={onNoteChange}
+          onBlur={onNoteBlur}
           long
         />
       </Card>
