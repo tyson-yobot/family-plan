@@ -16,9 +16,16 @@ function Hint({ children }: { children: React.ReactNode }) {
   return <p className="mt-1.5 text-[13px] leading-snug text-[var(--ink-soft)]">{children}</p>;
 }
 
+/**
+ * Marked with data-problem so the page can scroll to the first one. Without
+ * that, pressing continue at the bottom of a long section looks like the button
+ * is broken when the missing answer is somewhere above the fold.
+ */
 function Problem({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-1.5 text-[13px] font-medium leading-snug text-[#B3261E]">{children}</p>
+    <p data-problem className="mt-1.5 text-[13px] font-medium leading-snug text-[#B3261E]">
+      {children}
+    </p>
   );
 }
 

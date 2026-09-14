@@ -1,12 +1,106 @@
 # family-plan
 
-Private family planning tool. Phase 1a: five electronic worksheets that each
-person fills out and submits, stored in Railway PostgreSQL.
+A private planning tool for one family. Not a product, not for anyone else.
 
-- `api/` Fastify + Drizzle, deploys to Railway.
-- `web/` Next.js App Router, deploys to Vercel.
+## What it is
 
-Phase 1a deliberately has no login, no dashboard, no email reminders and no
-chore integration. Those are later phases.
+Five people each get their own private link. They open it on their phone once a
+month, fill in their own worksheet, and submit it. The answers go into a real
+database so they can be looked back at.
 
-Each person opens their own private link, `https://<domain>/f/<token>`.
+- `api/` Fastify and Drizzle against Railway PostgreSQL. Deploys to Railway.
+- `web/` Next.js App Router. Deploys to Vercel. Installable to a phone home
+  screen as a Progressive Web App.
+
+There are three worksheets, not one. Tyson and Danyell get the adult worksheet,
+six sections. Aidan and Mariah get the teen worksheet, four sections. Dylan gets
+the young-adult worksheet, four sections, written for a nineteen year old living
+at home rather than a bigger version of the teen one.
+
+## The access model
+
+There is no login. A person is identified only by a long random token in their
+own URL, `https://<site>/f/<token>`. Tokens are 32 characters of real
+randomness. Nothing in the API lists people, slugs or tokens, and request paths
+are redacted before they reach a log line, because Railway keeps those logs.
+
+The practical consequence: anyone holding the link is that person. That is the
+right trade for five people in one house and the wrong trade for anything
+bigger.
+
+## The month
+
+There is no dashboard and no scheduler yet, so the cycle is computed rather than
+chosen. It is the current calendar month, `YYYY-MM`, worked out on the server in
+the family's own timezone. The page never invents one.
+
+If someone has a half-finished worksheet from an earlier month, it is never
+silently resumed and never silently thrown away. They are asked which they want
+before anything else is shown.
+
+## Running it
+
+Both halves need environment variables. Nothing has a working default, on
+purpose: a missing one fails loudly at startup rather than quietly running
+wrong.
+
+`api/.env`
+
+    DATABASE_URL   the Railway PostgreSQL connection string
+    WEB_ORIGIN     exact site origins allowed to call the API, comma separated.
+                   Never "*": these URLs carry private tokens.
+    PORT           defaults to 8080
+
+`web/.env.local`
+
+    NEXT_PUBLIC_API_BASE_URL   the address of the API
+
+Commands:
+
+    cd api
+    npm install
+    npx drizzle-kit push          # schema changes go through drizzle-kit, not by hand
+    npm run build                 # tsc, then writes dist/build-info.json
+    npm start
+
+    cd web
+    npm install
+    npm run build
+
+## Adding or re-issuing the five links
+
+    cd api
+    WEB_BASE_URL=https://<site> npx tsx src/scripts/seed.ts
+
+Safe to run again. Anyone already in the table keeps the token they have, so
+links already handed out keep working. It prints each person's link and writes a
+QR code per person to `qr-codes/`, so each person can scan their own from a
+screen instead of being sent a link to forward.
+
+Run it locally and never in a build step. It prints full tokens, and a build log
+is not a place for them.
+
+## Checking a deploy actually landed
+
+`GET /api/version` returns the commit that is running and when it was built. Use
+that, not a health check: a health check returns 200 perfectly happily while the
+old code is still serving.
+
+## Two lists that must agree
+
+The field ids the API validates against live in `api/src/lib/templates.ts`. The
+wording shown on screen lives in `web/lib/worksheets.ts`. They are separate
+files because the two build contexts do not contain each other, and if they
+drift you get a worksheet that can be filled in and then refuses to submit.
+
+    npm run check:worksheet-ids
+
+from the repo root compares them. It is run by hand. Nothing enforces it in
+either deploy, and that is a real gap rather than a covered one.
+
+## Deliberately not built yet
+
+Phase 1a is worksheets and storage only. There is no login, no dashboard, no
+email, no reminders, no chore integration and no scheduling engine. Quarterly
+review timing exists in the plan as a later dashboard-driven idea and is not
+implemented here.

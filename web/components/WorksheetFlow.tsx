@@ -371,6 +371,13 @@ export function WorksheetFlow({ token }: { token: string }) {
         for (const entry of shortOnes) next[entry.key] = true;
         return next;
       });
+      // Take them to the first thing that still needs an answer, rather than
+      // leaving them at the bottom of the page wondering why nothing happened.
+      window.setTimeout(() => {
+        document
+          .querySelector('[data-problem]')
+          ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 50);
       return;
     }
 

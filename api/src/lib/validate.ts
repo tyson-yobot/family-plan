@@ -104,7 +104,7 @@ export function validatePayload(
   }
 
   // Scored life areas.
-  const areas = asRecord(body.areas, 'The scored areas');
+  const areas = asRecord(body.areas, 'Your score for each area');
   for (const area of template.areas) {
     const entry = asRecord(areas[area.id], `"${area.label}"`);
     requireScore(entry.score, `"${area.label}"`, template.scoreMin, template.scoreMax);

@@ -53,6 +53,22 @@ export const submissions = pgTable(
   (table) => [index('submissions_person_submitted_idx').on(table.personId, table.submittedAt)],
 );
 
+/**
+ * Who can open the parent view. Phase 2.
+ *
+ * Separate from `people` on purpose. A row here reads everybody's answers,
+ * which is a different thing from being someone who fills a worksheet in, and
+ * keeping them apart means a worksheet token can never be mistaken for a
+ * parent one.
+ */
+export const dashboardAccess = pgTable('dashboard_access', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  label: text('label').notNull().unique(),
+  accessToken: text('access_token').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Person = typeof people.$inferSelect;
+export type DashboardAccess = typeof dashboardAccess.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;

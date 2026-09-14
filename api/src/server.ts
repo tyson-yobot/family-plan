@@ -8,6 +8,7 @@ import { currentCycleLabel } from './lib/cycle.js';
 import { carryForward, EMPTY_CARRIED_FORWARD } from './lib/previous.js';
 import type { TemplateName } from './lib/templates.js';
 import { ValidationError, validatePayload } from './lib/validate.js';
+import { registerDashboardRoutes } from './routes/dashboard.js';
 
 /**
  * Access tokens sit in the URL, so the URL must never reach a log line. Fastify
@@ -15,7 +16,7 @@ import { ValidationError, validatePayload } from './lib/validate.js';
  * private links into the log stream.
  */
 function redactPath(url: string): string {
-  return url.replace(/\/api\/form\/[^/?]+/, '/api/form/[token]');
+  return url.replace(/\/api\/(form|dashboard)\/[^/?]+/, '/api/$1/[token]');
 }
 
 const app = Fastify({
@@ -70,6 +71,9 @@ interface TokenParams {
 }
 
 app.get('/api/version', async () => buildInfo);
+
+// The parent view, Phase 2. Read only.
+registerDashboardRoutes(app);
 
 app.get<{ Params: TokenParams }>('/api/form/:token', async (request, reply) => {
   const person = await findPerson(request.params.token);
