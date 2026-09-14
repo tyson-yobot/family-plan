@@ -75,6 +75,15 @@ export function WorksheetFlow({ token }: { token: string }) {
   const [showNote, setShowNote] = useState(false);
   /** Set only when someone deliberately redoes a month they have already sent. */
   const [startingAgain, setStartingAgain] = useState(false);
+  /**
+   * Bumped whenever the answers are cleared and started again. Without it the
+   * effect below runs once and never again, so clearing the answers also threw
+   * away everything carried over from last time: the name of their own area,
+   * the goals waiting to be closed, and the owner on each adult goal. The
+   * worksheet then refused to move past a section over a field the person was
+   * never shown.
+   */
+  const [freshStarts, setFreshStarts] = useState(0);
 
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [blurred, setBlurred] = useState<Record<string, true>>({});
@@ -176,7 +185,7 @@ export function WorksheetFlow({ token }: { token: string }) {
       }
       return changed ? next : current;
     });
-  }, [info, staleDraft]);
+  }, [info, staleDraft, freshStarts]);
 
   /**
    * Once someone answers a field that was flagged as missing, the message has
@@ -518,6 +527,7 @@ export function WorksheetFlow({ token }: { token: string }) {
             className="rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-[15px] font-semibold"
             onClick={() => {
               setPayload({});
+              setFreshStarts((n) => n + 1);
               setStartedAt(new Date().toISOString());
               setShowNote(Boolean(info.note_to_self));
               setStepIndex(0);
@@ -577,6 +587,7 @@ export function WorksheetFlow({ token }: { token: string }) {
           onClick={() => {
             setStartingAgain(true);
             setPayload({});
+            setFreshStarts((n) => n + 1);
             setStartedAt(new Date().toISOString());
             setShowNote(false);
             setStepIndex(0);
