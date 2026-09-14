@@ -442,6 +442,23 @@ export function WorksheetFlow({ token }: { token: string }) {
     await persist(payload, stepIndex);
   }, [payload, persist, stepIndex]);
 
+  /**
+   * Saves a couple of seconds after the last thing anyone typed or tapped.
+   *
+   * Saving on continue alone is not enough on its own: going back to an earlier
+   * section, changing an answer and then putting the phone down loses the
+   * change, because the next save is the one that carries it and it never
+   * happens. Nobody should have to press a button to keep what they wrote.
+   */
+  useEffect(() => {
+    if (loadState !== 'ready' || staleDraft || submitted || !startedAt) return;
+    if (Object.keys(payload).length === 0) return;
+    const timer = window.setTimeout(() => {
+      void persist(payload, stepIndex);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [loadState, payload, persist, staleDraft, startedAt, stepIndex, submitted]);
+
   const onSubmit = useCallback(async () => {
     if (!info) return;
     setBusy(true);
