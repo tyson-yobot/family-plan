@@ -75,6 +75,8 @@ export function WorksheetFlow({ token }: { token: string }) {
   const [showNote, setShowNote] = useState(false);
   /** Set only when someone deliberately redoes a month they have already sent. */
   const [startingAgain, setStartingAgain] = useState(false);
+  /** True when this page picked up a half-finished worksheet for this month. */
+  const [resumedThisMonth, setResumedThisMonth] = useState(false);
   /**
    * Bumped whenever the answers are cleared and started again. Without it the
    * effect below runs once and never again, so clearing the answers also threw
@@ -119,6 +121,7 @@ export function WorksheetFlow({ token }: { token: string }) {
           setStartedAt(draft.started_at);
           setShowNote(Boolean(ui?.showNote));
           setStepIndex(Number(ui?.step ?? 0));
+          setResumedThisMonth(true);
         } else if (draft) {
           // A draft from a previous month. Never resumed and never discarded
           // without asking.
@@ -569,7 +572,11 @@ export function WorksheetFlow({ token }: { token: string }) {
   // Already finished this month. Without this the worksheet reopens blank, with
   // nothing to say it is done, and filling it in again quietly files a second
   // set of answers for the same month.
-  if (info.submitted_this_cycle && !startingAgain) {
+  // Work in progress for this month wins over the "already done" screen. Someone
+  // part way through redoing a month would otherwise be sent back to "there is
+  // nothing to do" on every reload, with no sign of the answers they had
+  // already rewritten.
+  if (info.submitted_this_cycle && !startingAgain && !resumedThisMonth) {
     return (
       <Shell info={info} accent={accent} progress={null}>
         <h1 className="text-[22px] font-semibold leading-tight">
