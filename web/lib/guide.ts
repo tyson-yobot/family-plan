@@ -84,6 +84,10 @@ const AREA_ICONS: Record<string, IconName> = {
   responsibility_home: 'house',
   money: 'wallet',
   relationships: 'users',
+  // Filed under on a goal, but never scored by a check-in. See
+  // EXTRA_GOAL_AREAS in web/lib/areas.ts for why those are two different lists.
+  exercise: 'activity',
+  athletics: 'trophy',
 };
 
 export function areaIcon(id: string): IconName {

@@ -127,3 +127,61 @@ export type ChoresRating = (typeof CHORES_RATINGS)[number];
 
 /** The answers that mean the goal is not finished, and so ask for more. */
 export const UNFINISHED_ANSWERS: readonly LoopAnswer[] = ['Still working on it', 'Missed it'];
+
+/**
+ * The parts of life a GOAL can be filed under.
+ *
+ * This is deliberately NOT the same list as the scored areas above, and the
+ * difference is the whole reason it exists.
+ *
+ * The scored areas are the questions the check-in asks. `validatePayload` in
+ * lib/validate.ts requires a score and a reason for every one of them, so
+ * adding an entry to `ADULT_AREAS` and the rest does not add a place to file a
+ * goal, it adds a question to the check-in. Mission 2 forbids that in as many
+ * words: the six sections, their order, their questions and their wording do
+ * not change, and the new areas are "areas goals attach to. Do not add or
+ * reword any check-in question to introduce them."
+ *
+ * It would also have broken every half-finished check-in the moment it shipped,
+ * because a draft written before the new area would be missing a now-required
+ * answer.
+ *
+ * So goal areas are a superset: every scored area, in its own order, plus the
+ * ones a goal needs that nothing scores. Anything filed under a scored area can
+ * still be lined up against that score later, which was the original point of
+ * `goals.lifeArea` holding an area id.
+ */
+export const EXTRA_GOAL_AREAS: Record<TemplateName, AreaSpec[]> = {
+  /*
+   * Adults already have fitness_movement for exercise, friendships_community
+   * for relationships, and money_security for money, so none of those is added
+   * again. Athletics was missing everywhere, and an adult can play sport.
+   */
+  adult: [{ id: 'athletics', label: 'Athletics and sport' }],
+  /*
+   * Teens already have `friendships`, so relationships is not duplicated. What
+   * they had nothing for is a body: the five scored areas are school, friends,
+   * chores, how they feel about themselves, and free time.
+   */
+  teen: [
+    { id: 'exercise', label: 'Exercise and being active' },
+    { id: 'athletics', label: 'Athletics and sport' },
+  ],
+  /*
+   * Young adults already have `relationships`. Same gap as the teens on a body.
+   */
+  young_adult: [
+    { id: 'exercise', label: 'Exercise and being active' },
+    { id: 'athletics', label: 'Athletics and sport' },
+  ],
+};
+
+/** Every area a goal on this tier's board can be filed under. */
+export function goalAreasFor(template: TemplateName): AreaSpec[] {
+  return [...TEMPLATES[template].areas, ...EXTRA_GOAL_AREAS[template]];
+}
+
+/** Whether an id is a real place to file a goal on this tier. */
+export function isGoalArea(template: TemplateName, id: string): boolean {
+  return goalAreasFor(template).some((area) => area.id === id);
+}

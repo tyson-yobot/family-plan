@@ -134,18 +134,19 @@ function isRepeatedPair(code: string): boolean {
 const WELL_KNOWN = new Set(['2580', '1004', '2000', '6969', '1122', '1313']);
 
 /**
- * The four ways a date gets written as four digits. Only used when a birthday
- * is actually on the person's row, which is nobody's today.
+ * There is deliberately no birthday rule here.
+ *
+ * An earlier version refused a code that was the owner's date of birth. Turning
+ * it on meant storing five dates of birth, three of them a child's, and Tyson
+ * ruled that trade the wrong way round on 2026-09-15: the personal data it puts
+ * in the database costs more than the few hundred combinations it blocks. The
+ * lockout in lib/auth.ts and the shape rules above carry that load instead, and
+ * the lockout is the stronger of the two anyway, because it defends the live
+ * door rather than the choice of code.
+ *
+ * So do not add it back without deciding to store the dates on purpose.
  */
-function birthdayForms(birthday: string): string[] {
-  // Stored as YYYY-MM-DD.
-  const match = birthday.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return [];
-  const [, year, month, day] = match;
-  return [`${month}${day}`, `${day}${month}`, `${year.slice(2)}${month}`, `${month}${year.slice(2)}`];
-}
-
-export function refuseCode(code: string, birthday: string | null): CodeRefusal | null {
+export function refuseCode(code: string): CodeRefusal | null {
   if (!/^\d{4}$/.test(code)) {
     return { reason: 'A code is four numbers, nothing else.' };
   }
@@ -160,9 +161,6 @@ export function refuseCode(code: string, birthday: string | null): CodeRefusal |
   }
   if (WELL_KNOWN.has(code)) {
     return { reason: 'That is one of the most guessed codes there is. Pick another one.' };
-  }
-  if (birthday && birthdayForms(birthday).includes(code)) {
-    return { reason: 'That is your birthday, which is the first thing anyone would try.' };
   }
   return null;
 }

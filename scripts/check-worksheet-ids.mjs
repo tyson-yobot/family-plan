@@ -37,7 +37,41 @@ const webSets = {
   ),
 };
 
+/*
+ * The goal-area lists are a second pair that can drift, and they are NOT the
+ * same thing as the scored areas above. A goal can be filed under an area that
+ * no check-in scores, so these lists are a superset. Checked here because the
+ * failure is the same shape: a goal area offered on screen that the server
+ * refuses, or the other way round.
+ */
+const extraBlock = apiSource.slice(apiSource.indexOf('EXTRA_GOAL_AREAS'));
+const apiExtra = {
+  adult: idsBetween(extraBlock, '  adult: [', '  teen: ['),
+  teen: idsBetween(extraBlock, '  teen: [', '  young_adult: ['),
+  young_adult: idsBetween(extraBlock, '  young_adult: [', '};'),
+};
+const webExtraSource = readFileSync(join(root, 'web', 'lib', 'areas.ts'), 'utf8');
+const webExtra = {
+  adult: idsBetween(webExtraSource, '  adult: [', '  teen: ['),
+  teen: idsBetween(webExtraSource, '  teen: [', '  young_adult: ['),
+  young_adult: idsBetween(webExtraSource, '  young_adult: [', '};'),
+};
+
 let failed = false;
+for (const template of ['adult', 'teen', 'young_adult']) {
+  const api = apiExtra[template];
+  const web = webExtra[template];
+  const same = api.length === web.length && api.every((id, i) => id === web[i]);
+  if (same) {
+    console.log(`${template}: ${api.length} extra goal areas, ids match.`);
+  } else {
+    failed = true;
+    console.log(`${template}: GOAL AREA MISMATCH`);
+    console.log(`  api/src/lib/templates.ts : ${api.join(', ')}`);
+    console.log(`  web/lib/areas.ts         : ${web.join(', ')}`);
+  }
+}
+
 for (const template of ['adult', 'teen', 'young_adult']) {
   const api = apiSets[template];
   const web = webSets[template];

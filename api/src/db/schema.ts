@@ -40,13 +40,21 @@ export const people = pgTable('people', {
   failedAttempts: integer('failed_attempts').notNull().default(0),
   /** Set while a run of wrong codes has locked this person out. */
   lockedUntil: timestamp('locked_until', { withTimezone: true }),
-  /**
-   * Optional, and null for everybody today. When it is set, a code that is this
-   * date written any of the usual four ways is refused at the point of setting
-   * one. Nobody's birthday is stored yet, so today this rule refuses nothing;
-   * it is here so that filling the column in is the whole of turning it on.
+  /*
+   * There is deliberately no birthday column here any more.
+   *
+   * There was one, unused and null for all five people, to support a rule that
+   * refused a code matching the owner's date of birth. Tyson ruled on
+   * 2026-09-15 that storing five dates of birth, three of them a child's, to
+   * block a few hundred four-digit combinations is the wrong trade. The rule is
+   * gone from lib/codes.ts and the column is gone from here, so nothing in this
+   * codebase can read or write it.
+   *
+   * The physical column still exists on the production table: dropping one is a
+   * destructive migration and those are Tyson's to approve, not a session's. It
+   * is unreferenced and empty, so it holds no personal data while it waits.
+   * scripts/pending/001-drop-people-birthday.sql is the whole of removing it.
    */
-  birthday: text('birthday'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

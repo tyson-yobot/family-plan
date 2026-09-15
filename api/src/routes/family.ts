@@ -36,7 +36,11 @@ import { personFromSession } from '../lib/auth.js';
  *   targetNumber, progressNumber       the figures behind a goal. Mission 2's
  *                                      money screens live in these, and a money
  *                                      goal is shareable without its numbers
+ *   parentGoalId                       would confirm a private parent exists
+ *   weeklyHabit, weeklyTargetCount     the weekly detail is the owner's alone,
+ *   habit ticks                        and no route here reads habit_logs at all
  *   any score, any reason, any note    never leaves the person's own space
+ *   any coach response                 written for one person and shown to them
  *
  * And a goal its owner has marked private is not here at all: not its title,
  * not its status, not as a number. A row that says "and two others" is still a
@@ -54,6 +58,24 @@ interface SharedGoal {
   title: string;
   life_area: string | null;
   due_date: string | null;
+  /**
+   * Which timeframe this goal sits in. Added to the allow-list on purpose in
+   * Mission 2, and the reasoning matters because it is the first thing added
+   * here since the list was written.
+   *
+   * It is the same class of fact as `due_date`, which was already shared: when
+   * somebody means to have done this by. A ten-year goal being visible as a
+   * ten-year goal is the thing that lets the household see somebody is playing
+   * a long game rather than missing a short one, which is the point of sharing
+   * goals at all.
+   *
+   * `parent_goal_id` was deliberately NOT added alongside it. A ninety-day goal
+   * may hang off a parent its owner has marked private, and handing out that
+   * id would confirm a private goal exists and let a caller match several
+   * shared goals to the same hidden one. The laddering view lives in the
+   * owner's own space, where the parent is theirs to see.
+   */
+  horizon: Goal['horizon'];
   status: Goal['status'];
   created_cycle_label: string;
   closed_cycle_label: string | null;
@@ -131,6 +153,7 @@ export function registerFamilyRoutes(app: FastifyInstance) {
         title: goal.title,
         life_area: goal.lifeArea,
         due_date: goal.dueDate,
+        horizon: goal.horizon,
         status: goal.status,
         created_cycle_label: goal.createdCycleLabel,
         closed_cycle_label: goal.closedCycleLabel,

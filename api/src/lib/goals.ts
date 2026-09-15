@@ -1,6 +1,6 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { goals, goalSteps, type Goal, type GoalStep } from '../db/schema.js';
+import { goals, goalSteps, habitLogs, type Goal, type GoalStep } from '../db/schema.js';
 import { currentCycleLabel } from './cycle.js';
 import { LOOP_ANSWERS, type LoopAnswer, type TemplateName } from './templates.js';
 
@@ -16,6 +16,35 @@ import { LOOP_ANSWERS, type LoopAnswer, type TemplateName } from './templates.js
 export const OPEN = 'open' as const;
 
 export type ClosedStatus = 'hit' | 'missed' | 'dropped';
+
+/**
+ * The four timeframes a goal can sit in.
+ *
+ * Ordered shortest first, and the order is load-bearing rather than
+ * decorative: a goal may only hang off one that is LONGER than itself, which is
+ * checked by comparing positions in this array. Without that a ten year goal
+ * could be attached to a ninety day one, or to itself, and the derived progress
+ * below would count in a circle.
+ */
+export const HORIZONS = ['ninety_day', 'one_year', 'three_year', 'ten_year'] as const;
+export type Horizon = (typeof HORIZONS)[number];
+
+export function isHorizon(value: unknown): value is Horizon {
+  return typeof value === 'string' && (HORIZONS as readonly string[]).includes(value);
+}
+
+/** Whether `parent` is a longer timeframe than `child`. */
+export function isLongerThan(parent: Horizon, child: Horizon): boolean {
+  return HORIZONS.indexOf(parent) > HORIZONS.indexOf(child);
+}
+
+/** Plain words for a horizon, for a screen and for the coach's prompt. */
+export const HORIZON_LABELS: Record<Horizon, string> = {
+  ninety_day: 'Next 90 days',
+  one_year: '1 year',
+  three_year: '3 years',
+  ten_year: '10 years',
+};
 
 export { LOOP_ANSWERS };
 export type { LoopAnswer };
@@ -90,6 +119,10 @@ export interface NewGoal {
   isPrivate?: boolean;
   source?: string;
   sourceSubmissionId?: string | null;
+  horizon?: Horizon;
+  parentGoalId?: string | null;
+  weeklyHabit?: string | null;
+  weeklyTargetCount?: number | null;
 }
 
 export async function addGoal(personId: string, input: NewGoal): Promise<GoalWithSteps> {
@@ -106,6 +139,10 @@ export async function addGoal(personId: string, input: NewGoal): Promise<GoalWit
       isPrivate: input.isPrivate ?? false,
       source: input.source ?? 'manual',
       sourceSubmissionId: input.sourceSubmissionId ?? null,
+      horizon: input.horizon ?? 'ninety_day',
+      parentGoalId: input.parentGoalId ?? null,
+      weeklyHabit: input.weeklyHabit ?? null,
+      weeklyTargetCount: input.weeklyTargetCount ?? null,
       createdCycleLabel: currentCycleLabel(),
       sortOrder,
     })
@@ -179,6 +216,10 @@ export async function applyCheckIn(
       .set(closing)
       .where(and(eq(goals.id, goalId), eq(goals.personId, personId)));
   }
+
+  // The "Where I am going" answers become real horizon goals, in the same
+  // transaction as everything else here, so a check-in still lands whole.
+  await applyVision(tx, personId, templateName, payload, submissionId, personName);
 
   // Put this month's new goals on the board.
   const fresh: NewGoal[] = [];
@@ -260,4 +301,154 @@ export async function applyCheckIn(
   // That is the moment somebody is thinking about it; a privacy control they
   // have to go looking for afterwards is one they will not find.
   return created;
+}
+
+/**
+ * The three "Where I am going" answers, and which horizon each becomes.
+ *
+ * These field ids belong to the adult worksheet's second section. That
+ * section's wording is fixed by the mission and is not touched here: this reads
+ * what somebody already wrote and gives it somewhere to live, rather than
+ * asking anything new.
+ */
+const VISION_FIELDS: { field: string; horizon: Horizon }[] = [
+  { field: 'ten_years', horizon: 'ten_year' },
+  { field: 'three_years', horizon: 'three_year' },
+  { field: 'one_year', horizon: 'one_year' },
+];
+
+/**
+ * A short title out of a long answer.
+ *
+ * Somebody writing about where they want to be in ten years writes a paragraph,
+ * not a goal title, and the whole paragraph as a board item is unreadable. The
+ * first sentence is almost always the claim and the rest is the reasoning, so
+ * the first sentence becomes the title and the full text is kept in `detail`,
+ * where nothing is lost.
+ *
+ * Cut at a word boundary, never mid-word, and only when it is genuinely long.
+ */
+export function visionTitle(answer: string): string {
+  const clean = answer.trim().replace(/\s+/g, ' ');
+  const firstSentence = clean.split(/(?<=[.!?])\s/)[0] ?? clean;
+  const candidate = firstSentence.length > 0 ? firstSentence : clean;
+  if (candidate.length <= 90) return candidate;
+  const cut = candidate.slice(0, 90);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
+/**
+ * Turns the "Where I am going" answers into real horizon goals.
+ *
+ * ONE open goal per horizon per person, updated rather than duplicated. A
+ * person has one ten-year vision, not a new one every month, and the adult
+ * worksheet asks the same three questions every time. Creating a row per
+ * check-in would put twelve near-identical ten-year goals on the board within a
+ * year, which is exactly the bug the ninety-day de-duplication already exists
+ * to stop, one horizon up.
+ *
+ * Rewriting the answer edits the goal that is already there. That is the honest
+ * reading of somebody changing what they wrote: the vision moved, it is not a
+ * second vision. A vision goal somebody has deliberately closed is left closed,
+ * and a new one is written, because closing it was a decision.
+ */
+async function applyVision(
+  tx: typeof db,
+  personId: string,
+  templateName: TemplateName,
+  payload: Record<string, unknown>,
+  submissionId: string,
+  personName: string,
+): Promise<void> {
+  // Only the adult worksheet asks these. The teen and young-adult sheets have
+  // no horizon questions, and inventing answers for them is not this function's
+  // business.
+  if (templateName !== 'adult') return;
+
+  const now = new Date();
+  for (const { field, horizon } of VISION_FIELDS) {
+    const raw = payload[field];
+    const answer = typeof raw === 'string' ? raw.trim() : '';
+    if (answer === '') continue;
+
+    const existing = await tx
+      .select()
+      .from(goals)
+      .where(
+        and(
+          eq(goals.personId, personId),
+          eq(goals.horizon, horizon),
+          eq(goals.source, 'vision'),
+          eq(goals.status, OPEN),
+        ),
+      )
+      .limit(1);
+
+    if (existing[0]) {
+      // Unchanged answer, nothing to write. Worth the check: an update here
+      // every month would move updatedAt and make an untouched vision look
+      // freshly worked on, which the weekly nudge reads.
+      if (existing[0].detail === answer) continue;
+      await tx
+        .update(goals)
+        .set({ title: visionTitle(answer), detail: answer, updatedAt: now })
+        .where(eq(goals.id, existing[0].id));
+      continue;
+    }
+
+    const rows = await tx
+      .select({ sortOrder: goals.sortOrder })
+      .from(goals)
+      .where(eq(goals.personId, personId));
+    const sortOrder = rows.reduce((highest, row) => Math.max(highest, row.sortOrder), 0) + 1;
+
+    await tx.insert(goals).values({
+      personId,
+      title: visionTitle(answer),
+      detail: answer,
+      horizon,
+      owner: personName,
+      source: 'vision',
+      sourceSubmissionId: submissionId,
+      createdCycleLabel: currentCycleLabel(),
+      sortOrder,
+    });
+  }
+}
+
+export { applyVision };
+
+/**
+ * How far along a longer goal is, worked out from the shorter goals hanging off
+ * it rather than from anything its owner types.
+ *
+ * This is the point of the horizons: somebody should be able to see a ninety
+ * day win move a three year number without doing any arithmetic. So it counts
+ * children, and it counts them by what actually happened.
+ *
+ * Only `hit` counts as done. A goal that was missed or deliberately dropped is
+ * still part of the denominator, because pretending a dropped goal never
+ * existed quietly inflates the number, and a progress bar that flatters is
+ * worse than none.
+ *
+ * Returns nothing for a goal with no children, rather than zero. "No progress
+ * yet" and "nothing attached yet" are different things and a bar at zero says
+ * the wrong one.
+ */
+export interface HorizonProgress {
+  done: number;
+  total: number;
+}
+
+export function horizonProgressFrom(all: Goal[]): Map<string, HorizonProgress> {
+  const out = new Map<string, HorizonProgress>();
+  for (const goal of all) {
+    if (!goal.parentGoalId) continue;
+    const at = out.get(goal.parentGoalId) ?? { done: 0, total: 0 };
+    at.total += 1;
+    if (goal.status === 'hit') at.done += 1;
+    out.set(goal.parentGoalId, at);
+  }
+  return out;
 }

@@ -1,0 +1,15 @@
+-- Drop the unused people.birthday column.
+--
+-- Written 2026-09-15. Tyson's decision: storing five dates of birth, three of
+-- them a child's, to refuse a few hundred four-digit codes is not worth the
+-- personal data. The rule was removed from the code in the same session and
+-- nothing reads or writes this column any more.
+--
+-- DESTRUCTIVE: dropping a column is not reversible. It is safe here only
+-- because the column is null for every row, which is worth confirming rather
+-- than assuming:
+--
+--   select count(*) from people where birthday is not null;   -- expect 0
+--
+-- Run it only after that returns 0.
+alter table people drop column if exists birthday;

@@ -9,9 +9,15 @@ import {
   addGoal,
   applyCheckIn,
   boardFor,
+  horizonProgressFrom,
+  isHorizon,
+  isLongerThan,
   openGoalsFor,
   type GoalWithSteps,
+  type Horizon,
 } from '../lib/goals.js';
+import { toggleHabitDay, weekFor } from '../lib/week.js';
+import { goalAreasFor } from '../lib/templates.js';
 import { carryForward, EMPTY_CARRIED_FORWARD } from '../lib/previous.js';
 import type { TemplateName } from '../lib/templates.js';
 import { ValidationError, validatePayload } from '../lib/validate.js';
@@ -167,7 +173,7 @@ export function registerSpaceRoutes(app: FastifyInstance) {
       }
 
       const code = typeof request.body?.code === 'string' ? request.body.code : '';
-      const refusal = refuseCode(code, person.birthday);
+      const refusal = refuseCode(code);
       if (refusal) return reply.code(400).send({ error: refusal.reason });
 
       await db
@@ -259,8 +265,62 @@ export function registerSpaceRoutes(app: FastifyInstance) {
       // and must not read as a second month.
       total_check_ins: new Set(mine.map((row) => row.cycleLabel)).size,
       goals: board.map(goalShape),
+      /**
+       * How far each longer goal has come, worked out from the shorter goals
+       * hanging off it. Keyed by the longer goal's id, and absent rather than
+       * zero where nothing is attached yet: "no progress" and "nothing attached"
+       * are different things and a bar at nought says the wrong one.
+       */
+      horizon_progress: Object.fromEntries(
+        horizonProgressFrom(board.map((item) => item.goal)),
+      ),
+      /** Every area a goal on this tier can be filed under. Not the scored list. */
+      goal_areas: goalAreasFor(person.templateType),
     };
   });
+
+  /**
+   * This person's week: the habits on their own goals, what is ticked, and the
+   * run of weeks behind each one.
+   *
+   * Private to its owner, like everything else below `owner()`. The household
+   * sees a goal and whether it was hit; it does not see which days anybody
+   * ticked, and nothing in this route's shape goes anywhere near the family
+   * board.
+   */
+  app.get<{ Params: SlugParams }>('/api/space/:slug/week', async (request, reply) => {
+    const person = await owner(request, reply, request.params.slug);
+    if (!person) return;
+    return { habits: await weekFor(person.id) };
+  });
+
+  interface HabitBody {
+    date?: unknown;
+  }
+
+  /** Tick or untick one day of one habit. Scoped by person, like every write here. */
+  app.post<{ Params: SlugParams & { goalId: string }; Body: HabitBody }>(
+    '/api/space/:slug/goals/:goalId/habit',
+    async (request, reply) => {
+      const person = await owner(request, reply, request.params.slug);
+      if (!person) return;
+
+      const found = await db
+        .select()
+        .from(goals)
+        .where(and(eq(goals.id, request.params.goalId), eq(goals.personId, person.id)))
+        .limit(1);
+      if (!found[0]) return reply.code(404).send({ error: 'That goal could not be found.' });
+      if (!found[0].weeklyHabit || found[0].weeklyHabit.trim() === '') {
+        return reply.code(400).send({ error: 'That goal has no weekly habit on it yet.' });
+      }
+
+      const day = typeof request.body?.date === 'string' ? request.body.date : '';
+      const outcome = await toggleHabitDay(person.id, found[0], day);
+      if (!outcome.ok) return reply.code(400).send({ error: outcome.error });
+      return { ok: true, done: outcome.done, habits: await weekFor(person.id) };
+    },
+  );
 
   /** Their own history: their own scores over time, and every goal they ever set. */
   app.get<{ Params: SlugParams }>('/api/space/:slug/history', async (request, reply) => {
@@ -329,6 +389,56 @@ export function registerSpaceRoutes(app: FastifyInstance) {
     detail?: unknown;
     first_step?: unknown;
     is_private?: unknown;
+    horizon?: unknown;
+    parent_goal_id?: unknown;
+    weekly_habit?: unknown;
+    weekly_target_count?: unknown;
+  }
+
+  /**
+   * How many times a week a habit is meant to happen.
+   *
+   * Refused outside one to seven, because a weekly row has seven boxes and a
+   * target of nine is a target nobody can ever meet. Null clears it, which is a
+   * habit somebody wants to do "regularly" without committing to a number.
+   */
+  function weeklyTarget(value: unknown): number | null | 'bad' {
+    if (value === null || value === undefined || value === '') return null;
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 7) return 'bad';
+    return n;
+  }
+
+  /**
+   * Checks a goal may hang off the parent it names.
+   *
+   * Three things have to hold, and all three are about somebody else's data or
+   * about arithmetic that would otherwise loop forever: the parent has to
+   * belong to the SAME person, it has to be a LONGER horizon than the child,
+   * and a goal cannot be its own parent. Without the first, a goal id belonging
+   * to another person could be attached to and its progress read through the
+   * derived count, which is the exact hole the rest of this file closes.
+   */
+  async function checkParent(
+    personId: string,
+    parentId: string | null,
+    childHorizon: Horizon,
+    selfId: string | null,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!parentId) return { ok: true };
+    if (selfId && parentId === selfId) {
+      return { ok: false, error: 'A goal cannot hang off itself.' };
+    }
+    const found = await db
+      .select({ id: goals.id, horizon: goals.horizon })
+      .from(goals)
+      .where(and(eq(goals.id, parentId), eq(goals.personId, personId)))
+      .limit(1);
+    if (!found[0]) return { ok: false, error: 'That bigger goal could not be found.' };
+    if (!isLongerThan(found[0].horizon, childHorizon)) {
+      return { ok: false, error: 'A goal can only hang off a longer one than itself.' };
+    }
+    return { ok: true };
   }
 
   app.post<{ Params: SlugParams; Body: NewGoalBody }>(
@@ -340,6 +450,21 @@ export function registerSpaceRoutes(app: FastifyInstance) {
       const title = text(request.body?.title);
       if (!title) return reply.code(400).send({ error: 'A goal needs writing down first.' });
 
+      const horizonRaw = request.body?.horizon;
+      const horizon: Horizon = isHorizon(horizonRaw) ? horizonRaw : 'ninety_day';
+      if (horizonRaw !== undefined && horizonRaw !== null && !isHorizon(horizonRaw)) {
+        return reply.code(400).send({ error: 'That is not one of the timeframes.' });
+      }
+
+      const parentId = text(request.body?.parent_goal_id);
+      const parentOk = await checkParent(person.id, parentId, horizon, null);
+      if (!parentOk.ok) return reply.code(400).send({ error: parentOk.error });
+
+      const target = weeklyTarget(request.body?.weekly_target_count);
+      if (target === 'bad') {
+        return reply.code(400).send({ error: 'A weekly habit happens one to seven times a week.' });
+      }
+
       const created = await addGoal(person.id, {
         title,
         dueDate: text(request.body?.due_date),
@@ -347,6 +472,10 @@ export function registerSpaceRoutes(app: FastifyInstance) {
         detail: text(request.body?.detail),
         firstStep: text(request.body?.first_step),
         isPrivate: request.body?.is_private === true,
+        horizon,
+        parentGoalId: parentId,
+        weeklyHabit: text(request.body?.weekly_habit),
+        weeklyTargetCount: target,
         owner: person.name,
         source: 'manual',
       });
@@ -362,6 +491,10 @@ export function registerSpaceRoutes(app: FastifyInstance) {
     status?: unknown;
     closed_note?: unknown;
     is_private?: unknown;
+    horizon?: unknown;
+    parent_goal_id?: unknown;
+    weekly_habit?: unknown;
+    weekly_target_count?: unknown;
   }
 
   app.patch<{ Params: SlugParams & { goalId: string }; Body: EditGoalBody }>(
@@ -392,6 +525,44 @@ export function registerSpaceRoutes(app: FastifyInstance) {
       if ('detail' in (request.body ?? {})) patch.detail = text(request.body?.detail);
       if ('closed_note' in (request.body ?? {})) patch.closedNote = text(request.body?.closed_note);
       if ('is_private' in (request.body ?? {})) patch.isPrivate = request.body?.is_private === true;
+
+      /*
+       * Horizon and parent move together whether or not both were sent.
+       *
+       * They have to be validated as a pair: "a parent must be longer than its
+       * child" is a comparison between the two, so changing either one alone
+       * can break the pair. Checking only the field that arrived would let a
+       * ninety-day goal already hanging off a one-year goal be promoted to a
+       * ten-year goal, leaving a ten-year goal hanging off a one-year one.
+       */
+      const body = request.body ?? {};
+      const wantsHorizon = 'horizon' in body;
+      const wantsParent = 'parent_goal_id' in body;
+      if (wantsHorizon || wantsParent) {
+        let horizon: Horizon = existing[0].horizon;
+        if (wantsHorizon) {
+          if (!isHorizon(body.horizon)) {
+            return reply.code(400).send({ error: 'That is not one of the timeframes.' });
+          }
+          horizon = body.horizon;
+        }
+        const parentId = wantsParent ? text(body.parent_goal_id) : existing[0].parentGoalId;
+        const parentOk = await checkParent(person.id, parentId, horizon, existing[0].id);
+        if (!parentOk.ok) return reply.code(400).send({ error: parentOk.error });
+        patch.horizon = horizon;
+        patch.parentGoalId = parentId;
+      }
+
+      if ('weekly_habit' in body) patch.weeklyHabit = text(body.weekly_habit);
+      if ('weekly_target_count' in body) {
+        const target = weeklyTarget(body.weekly_target_count);
+        if (target === 'bad') {
+          return reply
+            .code(400)
+            .send({ error: 'A weekly habit happens one to seven times a week.' });
+        }
+        patch.weeklyTargetCount = target;
+      }
 
       if ('status' in (request.body ?? {})) {
         const status = request.body?.status;
