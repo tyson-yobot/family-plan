@@ -129,10 +129,14 @@ function fold(parts: Part[]): Part[] {
   const result = [...parts];
   for (let i = result.length - 1; i >= 0; i--) {
     const part = result[i];
-    if (total(part) > ORPHAN_WEIGHT) continue;
+    // An empty screen cannot happen today, because partsOf never pushes one.
+    // Skipping it rather than reading part[0] means that if it ever could, the
+    // pacing would be slightly odd instead of the worksheet failing to render.
+    if (part.length === 0 || total(part) > ORPHAN_WEIGHT) continue;
     const canMerge = (other: Part | undefined) =>
       Boolean(
         other &&
+          other.length > 0 &&
           runKey(other[0]) === runKey(part[0]) &&
           total(other) + total(part) <= MERGE_CEILING,
       );

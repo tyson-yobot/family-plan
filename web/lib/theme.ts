@@ -84,7 +84,6 @@ export function accentStyle(accent: string): Record<string, string> {
     // there is no separate darker variant to keep in step.
     '--accent-ink': accent,
     '--accent-tint': tintOf(accent),
-    '--accent-wash': tintOf(accent, 0.06),
   };
 }
 

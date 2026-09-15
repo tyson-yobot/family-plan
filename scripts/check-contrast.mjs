@@ -31,10 +31,30 @@ function readAccents() {
     m[1],
     m[2],
   ]);
-  const spare = [...source.matchAll(/^\s*'(#[0-9a-fA-F]{6})',\s*\/\/\s*(\w+)/gm)].map((m) => [
-    m[2],
-    m[1],
-  ]);
+
+  // The spare palette is read out of its own array rather than by scanning the
+  // whole file, and then counted. A spare accent whose line this could not read
+  // used to be skipped in silence, so the colour shipped unmeasured under a
+  // green summary, which is a check that reports success while the failure it
+  // exists to catch is happening.
+  const block = source.match(/SPARE_ACCENTS:\s*string\[\]\s*=\s*\[([\s\S]*?)\]/);
+  if (!block) throw new Error('SPARE_ACCENTS is no longer an array in web/lib/theme.ts.');
+  const lines = block[1].split('\n').filter((line) => line.trim() !== '');
+  const spare = [];
+  for (const line of lines) {
+    const found = line.match(/'(#[0-9a-fA-F]{6})'\s*,\s*\/\/\s*(\S+)/);
+    if (!found) {
+      throw new Error(
+        `A spare accent could not be read, so it would have shipped unmeasured: ${line.trim()}\n` +
+          "Each line must be  '#RRGGBB', // name",
+      );
+    }
+    spare.push([found[2], found[1]]);
+  }
+  if (spare.length !== lines.length) {
+    throw new Error(`SPARE_ACCENTS has ${lines.length} entries but ${spare.length} were read.`);
+  }
+
   return [...named, ...spare];
 }
 

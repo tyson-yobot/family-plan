@@ -63,6 +63,38 @@ function monthName(cycleLabel: string): string {
 /** The keys the page uses to remember where someone was. Never submitted. */
 const UI_KEY = '_ui';
 
+/**
+ * Where somebody was, written down as the screen itself rather than as its
+ * position in a list.
+ *
+ * A bare index was safe while a step was a whole section, because only adding
+ * or removing a section could move one. It is not safe now. How many screens a
+ * section is asked over depends on the fields inside it, so removing a single
+ * scored life area can change the number of screens and shift every index after
+ * it. Anybody holding a half-finished check-in across that deploy would come
+ * back to a different screen than the one they left, silently.
+ *
+ * So the place is stored as what it is, and looked up again on the way back in.
+ * A place that no longer exists is not guessed at: it falls back to the start,
+ * where all the answers are still on screen and nothing is lost.
+ */
+function placeOf(step: Step | undefined): Step | null {
+  if (!step) return null;
+  return { kind: step.kind, index: step.index, part: step.part };
+}
+
+function indexOfPlace(steps: Step[], place: unknown): number | null {
+  if (typeof place !== 'object' || place === null) return null;
+  const want = place as Step;
+  const found = steps.findIndex(
+    (step) =>
+      step.kind === want.kind &&
+      (step.index ?? null) === (want.index ?? null) &&
+      (step.part ?? null) === (want.part ?? null),
+  );
+  return found >= 0 ? found : null;
+}
+
 function stripUiState(payload: Payload): Payload {
   const copy = { ...payload };
   delete copy[UI_KEY];
@@ -106,6 +138,13 @@ export function WorksheetFlow({ token }: { token: string }) {
    * one. Cleared by the banner itself once it has had its few seconds.
    */
   const [justFinished, setJustFinished] = useState<{ title: string; index: number } | null>(null);
+  /**
+   * The screen a resumed draft said it was on, held until the list of steps has
+   * been built and it can be looked up. Undefined once it has been used.
+   */
+  const [pendingPlace, setPendingPlace] = useState<
+    { place: unknown; legacyStep: number } | undefined
+  >(undefined);
   /** Set only when someone deliberately redoes a month they have already sent. */
   const [startingAgain, setStartingAgain] = useState(false);
   /** True when this page picked up a half-finished worksheet for this month. */
@@ -161,7 +200,8 @@ export function WorksheetFlow({ token }: { token: string }) {
           setStartedAt(draft.started_at);
           setShowNote(Boolean(ui?.showNote));
           setShowOverview(Boolean(ui?.showOverview));
-          setStepIndex(Number(ui?.step ?? 0));
+          // Where they were is resolved once the steps exist, below.
+          setPendingPlace({ place: ui?.place, legacyStep: Number(ui?.step ?? 0) });
           setResumedThisMonth(true);
         } else if (draft) {
           // A draft from a previous month. Never resumed and never discarded
@@ -229,6 +269,37 @@ export function WorksheetFlow({ token }: { token: string }) {
    * cannot drift, and it never counts the explanation screen as part of it.
    */
   const screenCount = Math.max(steps.filter((entry) => entry.kind !== 'overview').length, 1);
+
+  /**
+   * Puts a resumed draft back on the screen it named, now that the list of
+   * steps exists. Runs once per resume and then forgets, so it can never fight
+   * with somebody pressing continue.
+   */
+  useEffect(() => {
+    if (!pendingPlace || steps.length === 0) return;
+    const found = indexOfPlace(steps, pendingPlace.place);
+    if (found !== null) {
+      setStepIndex(found);
+    } else {
+      // Either a draft written before places were stored, or a screen that no
+      // longer exists. The old number is still the best guess in the first case
+      // and is clamped in the second; the answers are all there either way.
+      setStepIndex(Math.min(Math.max(pendingPlace.legacyStep, 0), steps.length - 1));
+    }
+    setPendingPlace(undefined);
+  }, [pendingPlace, steps]);
+
+  /** What gets written into the draft to remember this screen. */
+  const uiFor = useCallback(
+    (index: number) => ({
+      // Kept for a draft written by an older page, and as the fallback above.
+      step: index,
+      place: placeOf(steps[index]),
+      showNote,
+      showOverview,
+    }),
+    [showNote, showOverview, steps],
+  );
 
   // Fill in what carries over from last time, once, when the worksheet opens.
   useEffect(() => {
@@ -452,7 +523,7 @@ export function WorksheetFlow({ token }: { token: string }) {
         );
         return false;
       }
-      const toSave = { ...nextPayload, [UI_KEY]: { step: nextStep, showNote, showOverview } };
+      const toSave = { ...nextPayload, [UI_KEY]: uiFor(nextStep) };
       try {
         await saveDraft(token, {
           cycle_label: info.current_cycle_label,
@@ -469,7 +540,7 @@ export function WorksheetFlow({ token }: { token: string }) {
         return false;
       }
     },
-    [info, showNote, showOverview, startedAt, token],
+    [info, startedAt, token, uiFor],
   );
 
   const goTo = useCallback((next: number) => {
@@ -509,7 +580,7 @@ export function WorksheetFlow({ token }: { token: string }) {
 
     const nextStep = Math.min(stepIndex + 1, steps.length - 1);
     setBusy(true);
-    const nextPayload = { ...payload, [UI_KEY]: { step: nextStep, showNote, showOverview } };
+    const nextPayload = { ...payload, [UI_KEY]: uiFor(nextStep) };
     setPayload(nextPayload);
     const saved = await persist(nextPayload, nextStep);
     setBusy(false);
@@ -538,11 +609,10 @@ export function WorksheetFlow({ token }: { token: string }) {
     nudgeKeysFor,
     payload,
     persist,
-    showNote,
-    showOverview,
     step,
     stepIndex,
     steps.length,
+    uiFor,
     worksheet,
   ]);
 
@@ -657,9 +727,10 @@ export function WorksheetFlow({ token }: { token: string }) {
               // Restarted from the top, so their note from last time belongs
               // at the front of this run just as it would on a fresh one.
               setShowNote(Boolean(info.note_to_self));
-              // They have started one before, whatever month it was for, so
-              // the explanation screen is not forced on them again.
-              setShowOverview(false);
+              // Starting one is not the same as having finished one, and this
+              // screen did not exist when they abandoned that draft. Somebody
+              // who has still never sent a check-in gets it.
+              setShowOverview(!info.has_earlier_submissions);
               setStepIndex(0);
               setStaleDraft(null);
             }}
@@ -674,7 +745,7 @@ export function WorksheetFlow({ token }: { token: string }) {
               setFreshStarts((n) => n + 1);
               setStartedAt(new Date().toISOString());
               setShowNote(Boolean(info.note_to_self));
-              setShowOverview(false);
+              setShowOverview(!info.has_earlier_submissions);
               setStepIndex(0);
               setStaleDraft(null);
             }}
@@ -785,20 +856,31 @@ export function WorksheetFlow({ token }: { token: string }) {
    */
   const firstAnsweringStep = steps.findIndex((entry) => entry.kind === 'loop');
   const reviewStep = steps.findIndex((entry) => entry.kind === 'review');
-  const progress =
-    step?.kind === 'section'
-      ? {
-          section: (step.index ?? 0) + 1,
-          sectionTotal: sectionCount,
-          part: (step.part ?? 0) + 1,
-          partCount: step.partCount ?? 1,
-          // Counted from the first screen that asks for anything to the review.
-          fraction:
-            reviewStep > firstAnsweringStep
-              ? (stepIndex - firstAnsweringStep) / (reviewStep - firstAnsweringStep)
-              : 0,
-        }
-      : null;
+  /**
+   * The bar runs from the first screen that asks for anything to the review,
+   * and it is on every one of them, including the loop screen at the start and
+   * the review at the end, where it is full. It used to appear only on section
+   * screens, which meant the last thing it did was read ninety four per cent and
+   * then vanish rather than close.
+   *
+   * The screens before the first question, the explanation and their own note,
+   * have no bar, because nothing has been asked yet and a bar at zero on a
+   * screen with no questions on it says nothing true.
+   */
+  const onAnsweringStep =
+    step?.kind === 'loop' || step?.kind === 'section' || step?.kind === 'review';
+  const progress = onAnsweringStep
+    ? {
+        section: step?.kind === 'section' ? (step.index ?? 0) + 1 : null,
+        sectionTotal: sectionCount,
+        part: step?.kind === 'section' ? (step.part ?? 0) + 1 : 1,
+        partCount: step?.kind === 'section' ? (step.partCount ?? 1) : 1,
+        fraction:
+          reviewStep > firstAnsweringStep
+            ? (stepIndex - firstAnsweringStep) / (reviewStep - firstAnsweringStep)
+            : 0,
+      }
+    : null;
 
   return (
     <Shell
@@ -1007,7 +1089,8 @@ export function WorksheetFlow({ token }: { token: string }) {
 }
 
 interface Progress {
-  section: number;
+  /** Null on the screens either side of the sections, which have no number. */
+  section: number | null;
   sectionTotal: number;
   part: number;
   partCount: number;
@@ -1082,7 +1165,9 @@ function Shell({
           */}
           <div className="flex items-baseline justify-between gap-3">
             <p className="min-w-0 truncate text-[13px] font-medium text-[var(--ink-soft)]">
-              Section {progress.section} of {progress.sectionTotal}
+              {progress.section === null
+                ? 'Your check-in'
+                : `Section ${progress.section} of ${progress.sectionTotal}`}
             </p>
             {progress.partCount > 1 ? (
               <p className="shrink-0 text-[13px] text-[var(--ink-soft)]">
@@ -1117,29 +1202,86 @@ function Shell({
         </div>
       ) : null}
 
-      <div className="mt-6">{children}</div>
+      {/*
+        Everything behind the panel is made inert while it is open. Without it
+        the panel says aria-modal and is not one: it is rendered after the
+        worksheet, so tabbing from the header button walks straight into the
+        worksheet nobody can see, and Enter on the continue button it lands on
+        advances a step behind an opaque screen.
+      */}
+      <div className="mt-6" inert={overviewOpen ? true : undefined}>
+        {children}
+      </div>
 
       {overviewOpen && screenCount ? (
-        <div
-          className="fixed inset-0 z-20 overflow-y-auto bg-[var(--page)] px-5 pb-10 pt-6"
-          role="dialog"
-          aria-modal="true"
-          aria-label="What a check-in is"
-        >
-          <div className="mx-auto w-full max-w-md">
-            <WhatThisIs template={info.template_type} screenCount={screenCount} />
-            <button
-              type="button"
-              onClick={onCloseOverview}
-              className="mt-8 w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-white"
-              style={{ background: accent }}
-            >
-              Back to my check-in
-            </button>
-          </div>
-        </div>
+        <OverviewPanel
+          template={info.template_type}
+          screenCount={screenCount}
+          accent={accent}
+          onClose={onCloseOverview}
+        />
       ) : null}
     </main>
+  );
+}
+
+/**
+ * The "what a check-in is" screen, opened from the header rather than reached
+ * as a step. Takes the focus when it opens, gives it back when it closes, and
+ * closes on Escape, because a panel that covers the whole screen has to behave
+ * like one for somebody who is not using a finger.
+ */
+function OverviewPanel({
+  template,
+  screenCount,
+  accent,
+  onClose,
+}: {
+  template: FormInfo['template_type'];
+  screenCount: number;
+  accent: string;
+  onClose?: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const openerRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    openerRef.current = document.activeElement;
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose?.();
+    };
+    document.addEventListener('keydown', onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+      const opener = openerRef.current;
+      if (opener instanceof HTMLElement) opener.focus();
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-20 overflow-y-auto bg-[var(--page)] px-5 pb-10 pt-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="What a check-in is"
+    >
+      <div className="mx-auto w-full max-w-md">
+        <WhatThisIs template={template} screenCount={screenCount} />
+        <button
+          ref={closeRef}
+          type="button"
+          onClick={onClose}
+          className="mt-8 w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-white"
+          style={{ background: accent }}
+        >
+          Back to my check-in
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1224,7 +1366,7 @@ function SectionView({
           const row = unit.row;
           const goal = payload.goals?.[row] ?? {};
           return (
-            <Card key={`goal-${row}`} icon={GOAL_ICON} heading={`Goal ${row + 1} of 3`}>
+            <Card key={`goal-${row}`} icon={GOAL_ICON} heading={`Goal ${row + 1}`}>
               <div className="flex flex-col gap-4">
                 <TextAnswer
                   label="The goal"

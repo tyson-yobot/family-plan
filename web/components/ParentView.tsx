@@ -206,7 +206,7 @@ function MonthRing({ done, total }: { done: number; total: number }) {
           cx="32"
           cy="32"
           r="26"
-          stroke="#1c1917"
+          stroke="var(--ink)"
           strokeWidth="5"
           strokeLinecap="round"
           strokeDasharray={circumference}
@@ -215,7 +215,12 @@ function MonthRing({ done, total }: { done: number; total: number }) {
           className="transition-[stroke-dashoffset] duration-700"
         />
       </svg>
-      <span className="absolute text-[15px] font-semibold tabular-nums">
+      {/*
+        Hidden from a screen reader, because the sentence beside this ring says
+        the same thing in words and hearing "3/5" and then "3 of 5 done so far"
+        is the same fact twice.
+      */}
+      <span className="absolute text-[15px] font-semibold tabular-nums" aria-hidden="true">
         {done}/{total}
       </span>
     </span>
@@ -249,10 +254,14 @@ function PersonRow({
       style={accentStyle(accent) as React.CSSProperties}
     >
       {/*
-        Finishing shows as a ring closed round their own initial, and being part
-        way through as the same ring half drawn. It replaces a two millimetre
-        dot, and it is the same treatment for everybody: the only thing it ever
-        says is whether this month is in.
+        Finishing shows as a ring closed round their own initial. Being part way
+        through shows as a dashed ring, not a part-drawn one.
+        A part-drawn arc was the first thing here and it was wrong: nothing in
+        this app knows how far through anybody is. The API sends only whether
+        somebody has started, so an arc two thirds of the way round was a number
+        nobody calculated, sitting directly under a ring whose arc is a real
+        fraction. A dash pattern is evenly spaced the whole way round, so it
+        cannot be read as a quantity at all.
       */}
       <span className="relative flex h-14 w-14 shrink-0 items-center justify-center">
         <svg width="56" height="56" viewBox="0 0 56 56" fill="none" aria-hidden="true">
@@ -265,9 +274,7 @@ function PersonRow({
               stroke={accent}
               strokeWidth="3"
               strokeLinecap="round"
-              strokeDasharray={2 * Math.PI * 25}
-              strokeDashoffset={finished ? 0 : 2 * Math.PI * 25 * 0.6}
-              transform="rotate(-90 28 28)"
+              strokeDasharray={finished ? undefined : '2 7'}
             />
           ) : null}
         </svg>

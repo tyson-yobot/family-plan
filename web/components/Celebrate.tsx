@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * The moments that mark finishing something.
@@ -84,14 +84,26 @@ export function SectionDone({
 }) {
   const [leaving, setLeaving] = useState(false);
 
+  /**
+   * The callback is held in a ref and the timers are keyed on the section, not
+   * on the callback. Keyed on the callback, the whole effect was torn down and
+   * restarted on every re-render, and the page re-renders on every keystroke,
+   * so a banner that is supposed to last five seconds instead sat at the top of
+   * the screen for the entire time somebody was answering the next question,
+   * and only left once they stopped typing.
+   */
+  const latest = useRef(onDone);
+  latest.current = onDone;
+
   useEffect(() => {
+    setLeaving(false);
     const fade = window.setTimeout(() => setLeaving(true), 5200);
-    const clear = window.setTimeout(onDone, 5800);
+    const clear = window.setTimeout(() => latest.current(), 5800);
     return () => {
       window.clearTimeout(fade);
       window.clearTimeout(clear);
     };
-  }, [onDone]);
+  }, [index, title]);
 
   return (
     <div

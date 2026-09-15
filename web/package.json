@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ../scripts/check-worksheet-ids.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ../scripts/check-chunks.mjs && node ../scripts/check-contrast.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
