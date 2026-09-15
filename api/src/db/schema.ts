@@ -355,6 +355,140 @@ export const houseAccess = pgTable('house_access', {
 });
 
 /**
+ * An adult's passphrase for the money area, and only for the money area.
+ *
+ * A four-digit code is right for a goal board. It is not right for a year of
+ * bank transactions, and pretending otherwise would be the weakest link in the
+ * whole app: ten thousand combinations guarding a household's spending history.
+ *
+ * So the money area sits behind a SECOND secret, longer, set by each adult
+ * separately, hashed exactly the way the four-digit code is. Two things follow
+ * from the shape of this table and both are deliberate:
+ *
+ *   - One row per adult, so Tyson and Danyell each have their own passphrase
+ *     and neither has to know the other's.
+ *   - Either correct passphrase opens the SAME shared household money view.
+ *     They run a household together and mutual accountability is the entire
+ *     point; a per-adult view of a joint account would be a fiction.
+ *
+ * The session it grants is separate from the ordinary sign-in and expires far
+ * sooner. An ordinary session lasts a month because it guards a goal board. A
+ * money session lasts minutes, because a phone left on a kitchen counter should
+ * not still be showing the bank.
+ */
+export const moneyAccess = pgTable('money_access', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  personId: uuid('person_id')
+    .notNull()
+    .unique()
+    .references(() => people.id),
+  /** scrypt, same format and same helpers as the four-digit code. */
+  passphraseHash: text('passphrase_hash').notNull(),
+  failedAttempts: integer('failed_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A phone that has just answered the money passphrase. Short-lived on purpose. */
+export const moneySessions = pgTable(
+  'money_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [index('money_sessions_person_idx').on(table.personId)],
+);
+
+/**
+ * What the household spends, by category, by month.
+ *
+ * Deliberately a SUMMARY table rather than a copy of the bank feed. The
+ * spending view needs "how much went on groceries in September" and the count
+ * behind it, so that is what is kept. Individual transactions are read from
+ * SimpleFIN, totalled, and thrown away.
+ *
+ * That is a decision about how much of a family's financial life sits in a
+ * hobby database on Railway, and it is the cautious way round: a copy of every
+ * transaction would be the single most sensitive thing here and nothing on any
+ * screen needs it. The cost is that a new way of slicing the data needs a
+ * re-pull rather than a re-query, which is a cost worth paying once a month.
+ */
+export const spendingByCategory = pgTable(
+  'spending_by_category',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** YYYY-MM, in the family's own timezone. */
+    cycleLabel: text('cycle_label').notNull(),
+    /** The category as SimpleFIN gave it, or as a household rule assigned it. */
+    category: text('category').notNull(),
+    /** Money out, as a positive number, in dollars. */
+    spent: numeric('spent').notNull(),
+    transactionCount: integer('transaction_count').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('spending_month_category_idx').on(table.cycleLabel, table.category)],
+);
+
+/** What the adults decided a category should cost per month. */
+export const spendingCaps = pgTable('spending_caps', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  category: text('category').notNull().unique(),
+  monthlyCap: numeric('monthly_cap').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A household rule for categorising a transaction SimpleFIN did not categorise.
+ *
+ * Applied GOING FORWARD only, never retrospectively. A rule that rewrote
+ * history would silently change last month's totals underneath a number
+ * somebody had already looked at and made a decision about.
+ */
+export const categoryRules = pgTable('category_rules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** Matched case-insensitively against the transaction description. */
+  matchText: text('match_text').notNull(),
+  category: text('category').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** The quarterly cut the adults are aiming for. One live row at a time. */
+export const savingsTargets = pgTable('savings_targets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  /** e.g. "2026-Q3". */
+  quarterLabel: text('quarter_label').notNull().unique(),
+  /** How much less they mean to spend across the quarter, in dollars. */
+  targetAmount: numeric('target_amount').notNull(),
+  /** The quarter's spend they are cutting FROM, set when the target is made. */
+  baselineAmount: numeric('baseline_amount'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * When the bank feed was last pulled, and how it went.
+ *
+ * One row, updated in place. It exists so a screen can say "as of Tuesday
+ * morning" rather than showing a number with no age on it, and so a feed that
+ * has been failing for a week says so plainly instead of quietly showing stale
+ * figures as though they were current.
+ */
+export const bankSync = pgTable('bank_sync', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  label: text('label').notNull().unique(),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  /** A short, already-scrubbed reason. Never the access URL. */
+  lastError: text('last_error'),
+  accountCount: integer('account_count'),
+});
+
+/**
  * The old parent links.
  *
  * These used to read every person's answers. They do not any more and nothing
@@ -378,3 +512,5 @@ export type GoalStep = typeof goalSteps.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
 export type CoachNote = typeof coachNotes.$inferSelect;
+export type SpendingRow = typeof spendingByCategory.$inferSelect;
+export type SpendingCap = typeof spendingCaps.$inferSelect;

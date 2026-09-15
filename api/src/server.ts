@@ -1,8 +1,12 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { buildInfo } from './lib/build-info.js';
+import { redactSecrets } from './lib/redact.js';
+import { syncBank } from './lib/money.js';
+import { simplefinConfigured } from './lib/simplefin.js';
 import { registerBoardRoutes } from './routes/board.js';
 import { registerFamilyRoutes } from './routes/family.js';
+import { registerMoneyRoutes } from './routes/money.js';
 import { registerSpaceRoutes } from './routes/space.js';
 
 /**
@@ -48,35 +52,6 @@ function redactPath(url: string): string {
   // A query string could carry anything and nothing here reads one, so it is
   // never logged at all rather than being picked over.
   return query === undefined ? redacted : `${redacted}?[redacted]`;
-}
-
-/**
- * Strips anything SHAPED like a credential out of free text.
- *
- * `redactPath` above only sees request paths, and the secret this was written
- * for never appears in one. A SimpleFIN access URL is of the form
- * https://<user>:<password>@bridge.../..., it lives in an environment
- * variable, and the way it escapes is an ERROR MESSAGE: fetch failures, DNS
- * failures and HTTP client errors all quote the URL they were given, and that
- * string then goes into a log line or, worse, into a reply.
- *
- * So this runs over error text on its way out. Shape-based for the same reason
- * `redactPath` is: a list of the variables it knows about would miss the next
- * one somebody adds, and the failure of a list is a leak nobody notices.
- *
- *   - Any URL carrying credentials before the @ loses them entirely.
- *   - Any remaining run of 20+ token characters is hidden.
- *
- * The second rule is blunt on purpose. It occasionally hides something dull,
- * which costs a slightly less readable log line, and that is the cheaper
- * mistake by a wide margin.
- */
-export function redactSecrets(text: string): string {
-  return text
-    // https://user:password@host -> https://[redacted]@host
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
-    // any long opaque run that could be a token or a key
-    .replace(/[A-Za-z0-9_-]{20,}/g, '[redacted]');
 }
 
 const app = Fastify({
@@ -169,10 +144,52 @@ registerBoardRoutes(app);
 // caller is the person it is about before it answers.
 registerSpaceRoutes(app);
 
+// The money area. Adults only, behind a SECOND and longer passphrase, and
+// read-only for ever. A child's session gets a plain not-found from every
+// route in there. See routes/money.ts for both gates.
+registerMoneyRoutes(app);
+
 // What the five of them can see of each other: goals, and nothing else. Behind
 // a code, because "shared with all five" is not "readable by whoever holds the
 // link". See routes/family.ts for the line between shared and private.
 registerFamilyRoutes(app);
+
+/**
+ * The bank feed is pulled on a SCHEDULE, never on a page load.
+ *
+ * Opening the money screen reads the summary table and nothing else, so the
+ * screen is fast, a refresh costs nothing, and a bank that is slow or down
+ * cannot hold a request open. The cost of that choice is that figures have an
+ * age, so the view carries its own freshness and says plainly when it is stale.
+ *
+ * Four times a day. Often enough that the month-to-date figure is never
+ * meaningfully behind, rare enough to be a considerate client of a service
+ * Tyson pays for per-use.
+ *
+ * `unref()` matters: without it this timer holds the process open and a deploy
+ * that should exit cleanly hangs until Railway kills it.
+ */
+const SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
+
+if (simplefinConfigured()) {
+  // Not at the instant of boot. A deploy restarts the process, and pulling on
+  // every restart would hammer the feed during a run of deploys.
+  const first = setTimeout(() => {
+    void syncBank().catch(() => {});
+  }, 60_000);
+  first.unref();
+
+  const repeating = setInterval(() => {
+    void syncBank().catch(() => {});
+  }, SYNC_EVERY_MS);
+  repeating.unref();
+
+  app.log.info('bank feed configured; scheduled pull every 6 hours');
+} else {
+  // Said out loud rather than failing silently, so "the money screen is empty"
+  // has an answer in the log rather than being a mystery.
+  app.log.info('bank feed not configured; money screens will say so');
+}
 
 const port = Number(process.env.PORT ?? 8080);
 await app.listen({ port, host: '0.0.0.0' });
