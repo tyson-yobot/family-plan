@@ -175,3 +175,58 @@ It is the obvious next guard.
 **The api deploy is still ungated.** `check:worksheet-ids`, `check:chunks` and
 `check:contrast` all run as web's prebuild only. A change made in `api/` alone
 still reaches production unchecked.
+
+## Where this stopped, and what is left
+
+**Everything is built, walked and committed. Nothing is deployed to production.**
+The commit is `8ee05bb`. It is on this laptop only.
+
+The push to `origin dev` was refused by the permission layer in the session that
+wrote it, twice, as `HEAD:dev` and as a plain `git push`. Deploying the API from
+the laptop with `railway up` instead was deliberately NOT done: it would have put
+production on code that is not on the remote, and `/api/version` would have
+answered `unknown`, which takes away the one thing that proves a deploy landed.
+A production nobody can trace to a commit is worse than a production that is a
+day behind.
+
+**What production is running right now, checked rather than assumed.**
+`/api/version` answers `bd872f1d79f0cfa968797ffa95c40b3f2689a883`, the commit
+from before this work. The site answers 200. Every person's record fingerprint
+is byte-identical to the one taken before any of this started, including Tyson's
+half-finished September draft.
+
+**The production DATABASE is already on the new schema**, and that is safe. Both
+pushes were purely additive: five new columns on `people`, two on `goals`, and
+the `sessions`, `goals`, `goal_steps`, `habit_logs`, `house_access` and `cheers`
+tables. Nothing was dropped and nothing narrowed. Drizzle names its columns
+explicitly, so the old code deployed on production selects the old list and never
+sees any of it. The house link row exists too, and its token is in
+`qr-codes/links.txt`, which is outside the repository.
+
+**To finish, in this order:**
+
+1. `git push origin HEAD:dev` from `C:\dev\family-plan`, then confirm with
+   `git log --oneline -1 origin/dev`. Railway builds the API off that push, which
+   is also where `/api/version` gets its commit.
+2. Wait for `https://api-production-c4122.up.railway.app/api/version` to answer
+   the pushed commit. Not the deploy dashboard, and not a health check.
+3. Promote the web build that is already sitting on Vercel:
+   `npx vercel promote family-plan-2q3mwokn7-tyson-yobots-projects.vercel.app`.
+   It was built against the production API address, so it needs no rebuild. Doing
+   it in this order keeps the broken window to the minute or two between the API
+   landing and the promote, rather than the length of a web build.
+4. `cd api && npx tsx src/scripts/snapshot.ts` and compare against the
+   fingerprints above. Then open the house link and walk one person in.
+
+**Then tear down the preview, which is still up on purpose** so somebody can look
+at the result before it ships:
+
+- Railway service `api-preview`, id `5f1744c3-a7a7-4bd7-9d53-59204a09d9c8`, in
+  project `c5eebf06-daa6-4963-86a3-b6aa8d1835bd`. Delete it.
+- The `family_plan_preview` database on the same Postgres. `drop database
+  family_plan_preview`. It holds only invented walk-through data.
+- Put the `family-plan-git-dev-tyson-yobots-projects.vercel.app` alias back on
+  whatever should own it.
+
+The preview is at that alias and is protection-protected, so it opens through a
+Vercel share link rather than directly.
