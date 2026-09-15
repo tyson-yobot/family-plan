@@ -3,8 +3,9 @@
  *
  * The field ids here must match the ones the API validates against, in
  * api/src/lib/templates.ts. The repo root script `npm run check:worksheet-ids`
- * compares the two; it is run by hand, not wired into either deploy, because
- * the api and web build contexts do not contain each other.
+ * compares the two, and runs as web's prebuild, so a drift fails this deploy
+ * rather than producing a worksheet that can be filled in and then refuses to
+ * submit. It does not gate the api deploy, which is still a gap.
  */
 
 export type TemplateName = 'adult' | 'teen' | 'young_adult';

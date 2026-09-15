@@ -20,6 +20,22 @@ moment, which was the point of that part of the work.
 
 ## The wrong assumptions a fresh session would make
 
+**The saved place is a screen, not a number.** A bare index used to be safe
+because a step was a whole section. It is not any more: how many screens a
+section is asked over depends on the fields inside it, so deleting one scored
+life area turns section one from five screens into four and shifts every index
+after it. `_ui.place` now holds `{kind, index, part}` and is looked up on the way
+back in; `_ui.step` is kept only as the fallback for a draft written before this
+existed. If you ever go back to trusting the number, a mid-month deploy silently
+moves whoever is part way through to a screen they did not leave.
+
+**Nothing on the parent dashboard knows how far through anybody is.** The API
+sends `started_at` and nothing else. A part-drawn arc for somebody mid-way was
+the first thing built here and it was wrong: a made-up quantity sitting directly
+under a ring whose arc is a real fraction. Being part way through is a dashed
+ring for exactly that reason. If a real position is ever wanted, send it from the
+API rather than inventing one in the component.
+
 **The section is not the unit any more.** A step is now
 `{kind:'section', index, part, partCount}`. `web/lib/chunks.ts` cuts a section
 into the screens it is asked over, by weight rather than by count, because three
@@ -80,10 +96,12 @@ were 24px across. Neither looked wrong.
 
 ## Left open, deliberately
 
-**Nothing runs the three checks except a person.** `check:worksheet-ids`,
-`check:chunks` and `check:contrast` are all run by hand. Wiring them into the
-Vercel build is the obvious fix and was not done here, because it is a change to
-how the project deploys rather than to how it looks.
+**The three checks now run as `web`'s `prebuild`, and that was tested rather
+than assumed.** The Vercel project's root directory is `web` but the build does
+get the files above it, confirmed by reading a real preview build log and seeing
+all three run. It was then watched failing on purpose: a worksheet field id was
+renamed, deployed, and Vercel refused the build. So a dropped or renamed field
+can no longer reach the family's links.
 
 **Score endpoint labels.** The 1-to-10 and 1-to-5 pickers show bare numbers. A
 word at each end would help an eleven year old, but whether that counts as the

@@ -95,10 +95,12 @@ drift you get a worksheet that can be filled in and then refuses to submit.
 
     npm run check:worksheet-ids
 
-from the repo root compares them. It is run by hand. Nothing enforces it in
-either deploy, and that is a real gap rather than a covered one.
+from the repo root compares them. It also runs as part of the web build, so a
+drift fails the deploy rather than reaching somebody's phone. It does not gate
+the api deploy, which is still a gap: the two halves can only be checked
+together from a tree that holds both.
 
-## Two more checks, run the same way
+## Two more checks, wired the same way
 
     npm run check:chunks
     npm run check:contrast
@@ -116,8 +118,10 @@ WCAG 2.1. Every accent is used three ways, as a button background under white
 text, as text on the page and on a card, and as a tint behind an icon, and a
 colour can be comfortable in one and fail in another.
 
-Both are run by hand, like the one above, and nothing in either deploy runs
-them.
+All three, these two and the worksheet-id check above, run as `web`'s `prebuild`
+script, so the Vercel build fails rather than shipping a worksheet that cannot
+be submitted. Run them by hand as well while you are working; the gate is there
+for the deploy, not as a substitute for looking.
 
 ## The parent view
 

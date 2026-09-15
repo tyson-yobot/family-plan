@@ -3,9 +3,10 @@
  *
  * The on-screen wording lives in web/lib/worksheets.ts. Only the ids and the
  * required-field rules live here, and the two lists must stay in step. The repo
- * root script `npm run check:worksheet-ids` compares them; it is run by hand,
- * not wired into either deploy, because the api and web build contexts do not
- * contain each other.
+ * root script `npm run check:worksheet-ids` compares them, and runs as web's
+ * prebuild, so a drift fails the web deploy. It does not gate this one: a
+ * change made here alone still reaches production unchecked, which is a real
+ * gap rather than a covered path.
  */
 
 export type TemplateName = 'adult' | 'teen' | 'young_adult';

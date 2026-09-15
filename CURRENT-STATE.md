@@ -66,8 +66,10 @@ others.
   is still asked, once, in the order it was written, and no screen has gone back
   to holding more than four. `npm run check:contrast` measures every colour pair
   the app renders against WCAG 2.1. Both were watched failing on purpose and
-  then passing. Like the worksheet-id check, both are run by hand: nothing in
-  either deploy runs them.
+  then passing. All three, including the worksheet-id check, now run as `web`'s
+  `prebuild`, so they gate the real Vercel build rather than waiting for
+  somebody to remember. That was tested by renaming a field id, deploying, and
+  watching Vercel refuse the build, not assumed from the project settings.
 - The preview walk does not need a Railway variable changed. The origin
   `family-plan-git-dev-tyson-yobots-projects.vercel.app` is already in
   `WEB_ORIGIN`, so `npx vercel deploy` then `npx vercel alias set <deployment>
