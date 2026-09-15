@@ -113,7 +113,23 @@ if (allowedOrigins.includes('*')) {
 await app.register(cors, {
   origin: allowedOrigins,
   methods: ['GET', 'PUT', 'POST', 'PATCH'],
-  allowedHeaders: ['content-type', 'authorization'],
+  /*
+   * `x-money-session` has to be named here or the money area cannot work at
+   * all from a browser.
+   *
+   * The money gate deliberately uses its own header rather than Authorization,
+   * so that an ordinary month-long session can never open the bank. The cost of
+   * that choice is this line: a custom request header is not on the CORS safe
+   * list, so the browser sends a preflight and refuses the real request unless
+   * the server names the header. Without it every money request fails as an
+   * opaque "Failed to fetch" with no status and no error body.
+   *
+   * It was missing when the money area first shipped, and no server-side test
+   * caught it: requests made from Node have no CORS at all, so the whole suite
+   * passed while the feature was unusable on a phone. It was found by opening
+   * the screen in a real browser.
+   */
+  allowedHeaders: ['content-type', 'authorization', 'x-money-session'],
 });
 
 /**

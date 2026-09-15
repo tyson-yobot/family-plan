@@ -147,10 +147,19 @@ function PassphraseGate({ gate, onOpened }: { gate: MoneyGate; onOpened: () => P
           : 'Your four-digit code opens your goals. The bank needs the longer passphrase you set.'}
       </p>
 
+      {/*
+        Deliberately says "the other adult" rather than naming one.
+        This line named Danyell, which reads correctly to Tyson and absurdly to
+        Danyell, who would be told she sets her own passphrase separately from
+        herself. Found by opening the screen as somebody who was not Tyson. A
+        name here would have to come from the server anyway, and the sentence
+        does not need one.
+      */}
       {setting ? (
         <p className="mt-2 text-[13px] leading-relaxed text-[var(--ink-soft)]">
-          Danyell sets her own, separately. Either one opens the same shared view, because
-          it is the household&rsquo;s money and you are both looking at the same picture.
+          The other adult sets their own, separately. Either passphrase opens the same shared
+          view, because it is the household&rsquo;s money and you are both looking at the same
+          picture.
         </p>
       ) : null}
 
