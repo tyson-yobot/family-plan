@@ -790,7 +790,6 @@ export function WorksheetFlow({ token }: { token: string }) {
       ? {
           section: (step.index ?? 0) + 1,
           sectionTotal: sectionCount,
-          title: worksheet.sections[step.index ?? 0]?.title ?? '',
           part: (step.part ?? 0) + 1,
           partCount: step.partCount ?? 1,
           // Counted from the first screen that asks for anything to the review.
@@ -1010,7 +1009,6 @@ export function WorksheetFlow({ token }: { token: string }) {
 interface Progress {
   section: number;
   sectionTotal: number;
-  title: string;
   part: number;
   partCount: number;
   /** How far through the whole check-in, 0 to 1. */
@@ -1077,13 +1075,20 @@ function Shell({
 
       {progress ? (
         <div className="mt-5">
+          {/*
+            The section's name is the heading immediately below this, so saying
+            it here as well is the same words twice on a small screen. This says
+            where you are instead: which section, and which screen of it.
+          */}
           <div className="flex items-baseline justify-between gap-3">
             <p className="min-w-0 truncate text-[13px] font-medium text-[var(--ink-soft)]">
-              {progress.title}
+              Section {progress.section} of {progress.sectionTotal}
             </p>
-            <p className="shrink-0 text-[13px] text-[var(--ink-soft)]">
-              {progress.section} of {progress.sectionTotal}
-            </p>
+            {progress.partCount > 1 ? (
+              <p className="shrink-0 text-[13px] text-[var(--ink-soft)]">
+                Screen {progress.part} of {progress.partCount}
+              </p>
+            ) : null}
           </div>
           <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--line)]">
             <div
@@ -1198,8 +1203,13 @@ function SectionView({
           // Repeating a long paragraph on all five screens of section one turns
           // it into something people scroll past, but somebody who has come
           // back a day later still needs it within reach.
-          <details className="mt-3 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-4 py-3">
-            <summary className="cursor-pointer text-[14px] font-semibold">
+          <details className="mt-3 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-4 py-1">
+            {/*
+              py-3 here, not on the box, so the line somebody taps is a full
+              44px tall. Measured at 390px wide: as a bare summary it was 21px,
+              which is half a thumb.
+            */}
+            <summary className="cursor-pointer py-3 text-[14px] font-semibold">
               Remind me what this section is asking
             </summary>
             <div className="mt-2">
@@ -1396,7 +1406,9 @@ function ReviewView({
     <button
       type="button"
       onClick={() => onEdit(target)}
-      className="text-[14px] font-semibold underline"
+      // The padding is the tap target, not decoration. Measured at 390px wide,
+      // the word on its own was 24px across against a 44px minimum.
+      className="-mr-3 -my-2 min-w-[44px] px-3 py-2 text-[14px] font-semibold underline"
       style={{ color: accent }}
     >
       Edit

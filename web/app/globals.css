@@ -11,10 +11,10 @@
   --line: #e7e0d7;
   --card: #ffffff;
   /* Replaced per person on the worksheet wrapper, by accentStyle in lib/theme. */
-  --accent: #334155;
-  --accent-ink: #334155;
-  --accent-tint: #ebedef;
-  --accent-wash: #f5f6f7;
+  --accent: #57534e;
+  --accent-ink: #57534e;
+  --accent-tint: #ebeaea;
+  --accent-wash: #f5f4f4;
 }
 
 html,
