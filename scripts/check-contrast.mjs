@@ -193,6 +193,26 @@ for (const [where, background] of [
 }
 
 /*
+ * The bars on the money screens, added in Mission 2.
+ *
+ * These are drawn on a --surface track inside a raised card, which is a
+ * different pairing from the accent progress bar above: that one sits on
+ * --line. A filled bar is the only thing on those screens carrying "over" or
+ * "under", so it is a non-text element with meaning and WCAG 1.4.11 applies at
+ * 3:1.
+ *
+ * Measured rather than assumed because green and red on a near-black track are
+ * exactly the pairing that looks obviously fine and is not.
+ */
+for (const [name, colour] of [
+  ['the quarterly bar when they are ahead', palette.good],
+  ['the quarterly bar when they are behind', palette.bad],
+  ['a category bar that is over its cap', palette.bad],
+]) {
+  add(`${name}, against its track`, colour, palette.surface, 3);
+}
+
+/*
  * Non-text things that carry meaning, at the 3:1 that WCAG 1.4.11 asks for.
  *
  * Two checks used to live here at 1.2 and 1.05. Those are not WCAG thresholds;

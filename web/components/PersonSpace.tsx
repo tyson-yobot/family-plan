@@ -20,6 +20,9 @@ import { accentFor, accentStyle, initialsFor } from '@/lib/theme';
 import { CodeGate } from './CodeGate';
 import { GoalBoard } from './GoalBoard';
 import { HistoryView } from './HistoryView';
+import { WeekView } from './WeekView';
+import { MoneyArea } from './MoneyArea';
+import { CoachNote } from './CoachNote';
 import { Icon } from './icons';
 import { WorksheetFlow } from './WorksheetFlow';
 
@@ -35,7 +38,7 @@ import { WorksheetFlow } from './WorksheetFlow';
  * building half of it now would mean a tab that looks finished and is not.
  */
 
-type Tab = 'goals' | 'history' | 'checkin';
+type Tab = 'goals' | 'week' | 'history' | 'money' | 'checkin';
 
 export function PersonSpace({ token, slug }: { token: string; slug: string }) {
   const [gate, setGate] = useState<Gate | null>(null);
@@ -60,6 +63,15 @@ export function PersonSpace({ token, slug }: { token: string; slug: string }) {
    */
   const [checkInOpened, setCheckInOpened] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  /**
+   * Set for the rest of this visit once a check-in has just been submitted.
+   *
+   * The private note is usually still being written at that moment, so the note
+   * component polls a few times rather than showing nothing. Without this it
+   * would poll on every ordinary visit to the board too, which is a request
+   * every seven seconds for a note that was written weeks ago.
+   */
+  const [justFinished, setJustFinished] = useState(false);
 
   const accent = accentFor(slug);
 
@@ -145,9 +157,20 @@ export function PersonSpace({ token, slug }: { token: string; slug: string }) {
 
   if (!space) return null;
 
+  /*
+   * The money tab is ABSENT for a child, not disabled and not empty.
+   *
+   * There is no tab, no label and no request. A disabled tab would tell three
+   * children there is a room in their own app they are not allowed into, which
+   * is both an unkindness and a signpost. The server refuses them as well, so
+   * this is the polite half of a rule that is actually enforced a layer down.
+   */
+  const isAdult = space.template_type === 'adult';
   const tabs: { id: Tab; label: string }[] = [
     { id: 'goals', label: 'Goals' },
+    { id: 'week', label: 'Week' },
     { id: 'history', label: 'History' },
+    ...(isAdult ? [{ id: 'money' as Tab, label: 'Money' }] : []),
     { id: 'checkin', label: 'Check-in' },
   ];
 
@@ -216,15 +239,34 @@ export function PersonSpace({ token, slug }: { token: string; slug: string }) {
                 setTab('checkin');
               }}
             />
+            {/*
+              The private note sits under this month and above the board,
+              because it is about the month that just happened and it is the
+              thing most worth reading before looking at what is open.
+            */}
+            <CoachNote
+              slug={slug}
+              expectSoon={justFinished}
+              onNeedsCode={onNeedsCode}
+              onAccepted={() => void load()}
+            />
             <div className="mt-6">
               <GoalBoard
                 slug={slug}
                 goals={space.goals}
+                goalAreas={space.goal_areas}
+                horizonProgress={space.horizon_progress}
                 onGoals={(goals: Goal[]) => setSpace({ ...space, goals })}
               />
             </div>
           </>
         ) : null}
+
+        {tab === 'week' ? (
+          <WeekView slug={slug} onNeedsCode={onNeedsCode} onChanged={() => void load()} />
+        ) : null}
+
+        {tab === 'money' && isAdult ? <MoneyArea onNeedsCode={onNeedsCode} /> : null}
 
         {tab === 'history' ? <HistoryView slug={slug} onNeedsCode={onNeedsCode} /> : null}
 
@@ -242,6 +284,7 @@ export function PersonSpace({ token, slug }: { token: string; slug: string }) {
                 // again rather than patched here. A check-in closes goals, opens
                 // new ones and can do both at once, and reproducing that in the
                 // browser would be a second implementation of the same rules.
+                setJustFinished(true);
                 void load();
               }}
             />

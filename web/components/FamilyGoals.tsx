@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { fetchFamilyGoals, NeedsCodeError, sendCheer, type FamilyGoals } from '@/lib/api';
 import { shortMonthName } from '@/lib/month';
+import { horizonLabel } from './GoalBoard';
 import { accentFor, initialsFor } from '@/lib/theme';
 import { Icon } from './icons';
 
@@ -184,6 +185,16 @@ export function FamilyGoalsView({ onNeedsCode }: { onNeedsCode: () => void }) {
                     <p className="text-[14px] leading-snug">{goal.title}</p>
                     <p className="mt-1 text-[12px] leading-snug text-[var(--ink-soft)]">
                       {[
+                        /*
+                          The timeframe, shown on anything that is not a
+                          ninety-day goal.
+                          Without it a ten-year goal sits in this list looking
+                          like a ninety-day one nobody has finished, which is
+                          the opposite of what it means. Ninety-day goals are
+                          left unlabelled because that is the default and
+                          labelling every one of them is noise.
+                        */
+                        goal.horizon !== 'ninety_day' ? horizonLabel(goal.horizon) : null,
                         goal.life_area,
                         goal.due_date ? `due ${goal.due_date}` : null,
                         goal.steps_total > 0

@@ -90,6 +90,8 @@ export interface SharedGoal {
   title: string;
   life_area: string | null;
   due_date: string | null;
+  /** The timeframe. Shared; the parent goal it hangs off is not. */
+  horizon: Goal['horizon'];
   status: Goal['status'];
   created_cycle_label: string;
   closed_cycle_label: string | null;
@@ -116,6 +118,78 @@ export interface Space {
   own_streak: number;
   total_check_ins: number;
   goals: Goal[];
+  /** Keyed by a longer goal's id. Absent where nothing is attached to it yet. */
+  horizon_progress: Record<string, { done: number; total: number }>;
+  /** Every area a goal can be filed under on this tier. Not the scored list. */
+  goal_areas: { id: string; label: string }[];
+}
+
+export interface HabitDay {
+  date: string;
+  label: string;
+  done: boolean;
+  is_today: boolean;
+  is_future: boolean;
+}
+
+export interface HabitWeek {
+  goal_id: string;
+  title: string;
+  weekly_habit: string;
+  weekly_target_count: number | null;
+  days: HabitDay[];
+  done_this_week: number;
+  streak_weeks: number;
+  days_since_last: number | null;
+  nudge: string | null;
+}
+
+export interface CoachNote {
+  id: string;
+  body: string;
+  cycle_label: string;
+  created_at: string;
+  suggested_step: string | null;
+  suggested_goal_id: string | null;
+  accepted: boolean;
+}
+
+export interface MoneyCategory {
+  category: string;
+  spent: number;
+  cap: number | null;
+  transaction_count: number;
+  over_by: number | null;
+  months_over: number;
+}
+
+export interface MoneyView {
+  cycle_label: string;
+  categories: MoneyCategory[];
+  total_spent: number;
+  worst: { category: string; over_by: number; months_over: number } | null;
+  quarter: {
+    label: string;
+    target: number | null;
+    baseline: number | null;
+    spent_so_far: number;
+    saved_so_far: number | null;
+  };
+  freshness: {
+    connected: boolean;
+    last_success_at: string | null;
+    last_attempt_at: string | null;
+    hours_old: number | null;
+    stale: boolean;
+    error: string | null;
+  };
+}
+
+export interface MoneyGate {
+  has_passphrase: boolean;
+  minimum_length: number;
+  locked_for_seconds: number;
+  bank_connected: boolean;
 }
 
 export interface HistoryMonth {
@@ -409,6 +483,10 @@ export async function addGoal(
     life_area?: string | null;
     first_step?: string | null;
     is_private?: boolean;
+    horizon?: Goal['horizon'];
+    parent_goal_id?: string | null;
+    weekly_habit?: string | null;
+    weekly_target_count?: number | null;
   },
 ): Promise<{ goal: Goal }> {
   return request(`/api/space/${encodeURIComponent(slug)}/goals`, {
@@ -429,6 +507,10 @@ export async function editGoal(
     status: Goal['status'];
     closed_note: string | null;
     is_private: boolean;
+    horizon: Goal['horizon'];
+    parent_goal_id: string | null;
+    weekly_habit: string | null;
+    weekly_target_count: number | null;
   }>,
 ): Promise<{ goal: Goal }> {
   return request(`/api/space/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}`, {
@@ -499,4 +581,212 @@ export async function submitCheckIn(
     body,
     auth: true,
   });
+}
+
+// --- the weekly drumbeat ---------------------------------------------------
+
+export async function fetchWeek(slug: string): Promise<{ habits: HabitWeek[] }> {
+  return request(`/api/space/${encodeURIComponent(slug)}/week`, { auth: true });
+}
+
+export async function toggleHabit(
+  slug: string,
+  goalId: string,
+  date: string,
+): Promise<{ done: boolean; habits: HabitWeek[] }> {
+  return request(
+    `/api/space/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/habit`,
+    { method: 'POST', body: { date }, auth: true },
+  );
+}
+
+// --- the private note ------------------------------------------------------
+
+export async function fetchCoachNote(
+  slug: string,
+): Promise<{ note: CoachNote | null; configured: boolean }> {
+  return request(`/api/space/${encodeURIComponent(slug)}/coach`, { auth: true });
+}
+
+export async function acceptCoachStep(slug: string, noteId: string): Promise<{ goals: Goal[] }> {
+  return request(
+    `/api/space/${encodeURIComponent(slug)}/coach/${encodeURIComponent(noteId)}/accept`,
+    { method: 'POST', auth: true },
+  );
+}
+
+export async function dismissCoachStep(slug: string, noteId: string): Promise<void> {
+  await request(
+    `/api/space/${encodeURIComponent(slug)}/coach/${encodeURIComponent(noteId)}/dismiss`,
+    { method: 'POST', auth: true },
+  );
+}
+
+// --- the money area, adults only -------------------------------------------
+
+/**
+ * The money session is kept SEPARATELY from the ordinary one, in sessionStorage
+ * rather than localStorage, and the difference is deliberate.
+ *
+ * sessionStorage dies with the tab. An ordinary session is meant to survive a
+ * phone being put down for a fortnight; a money session is meant not to. Even
+ * inside its fifteen minutes, closing the tab should end it, because the thing
+ * being guarded is a household's bank history on a shared phone.
+ */
+const MONEY_KEY = 'family-plan.money';
+
+export function readMoneySession(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(MONEY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token: string; expires_at: string };
+    if (!parsed?.token) return null;
+    if (parsed.expires_at && new Date(parsed.expires_at) <= new Date()) {
+      window.sessionStorage.removeItem(MONEY_KEY);
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    return null;
+  }
+}
+
+function writeMoneySession(token: string, expiresAt: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(MONEY_KEY, JSON.stringify({ token, expires_at: expiresAt }));
+  } catch {
+    // Same reasoning as the ordinary session: a phone with storage off still
+    // works, it just asks for the passphrase again.
+  }
+}
+
+export function clearMoneySession(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(MONEY_KEY);
+  } catch {
+    // Nothing worth failing a page over.
+  }
+}
+
+/** Thrown when the money passphrase is needed, so the screen can show its gate. */
+export class NeedsPassphraseError extends Error {
+  constructor() {
+    super('Enter your money passphrase.');
+    this.name = 'NeedsPassphraseError';
+  }
+}
+
+/**
+ * A money request carries BOTH secrets: the ordinary session in Authorization
+ * and the money session in its own header. Either one missing is a refusal.
+ */
+async function moneyRequest<T>(
+  path: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const session = readSession();
+  if (!session) throw new NeedsCodeError();
+  const money = readMoneySession();
+  if (!money) throw new NeedsPassphraseError();
+
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${session.token}`,
+    'x-money-session': money,
+  };
+  if (options.body !== undefined) headers['content-type'] = 'application/json';
+
+  const response = await fetch(apiUrl(path), {
+    method: options.method ?? 'GET',
+    cache: 'no-store',
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
+  const parsed = (await response.json().catch(() => null)) as
+    | (T & { error?: string; code?: string })
+    | null;
+
+  if (response.status === 401) {
+    if (parsed?.code === 'passphrase_required') {
+      clearMoneySession();
+      throw new NeedsPassphraseError();
+    }
+    clearSession();
+    throw new NeedsCodeError();
+  }
+  if (!response.ok) {
+    throw new Error(parsed?.error ?? 'That did not work just now.');
+  }
+  return parsed as T;
+}
+
+export async function fetchMoneyGate(): Promise<MoneyGate> {
+  return request('/api/money/gate', { auth: true });
+}
+
+export async function setMoneyPassphrase(passphrase: string): Promise<void> {
+  await request('/api/money/passphrase', { method: 'POST', body: { passphrase }, auth: true });
+}
+
+export async function unlockMoney(passphrase: string): Promise<void> {
+  const result = await request<{ money_session: string; expires_at: string }>('/api/money/unlock', {
+    method: 'POST',
+    body: { passphrase },
+    auth: true,
+  });
+  writeMoneySession(result.money_session, result.expires_at);
+}
+
+export async function lockMoney(): Promise<void> {
+  const money = readMoneySession();
+  clearMoneySession();
+  const session = readSession();
+  if (!money || !session) return;
+  try {
+    await fetch(apiUrl('/api/money/lock'), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session.token}`, 'x-money-session': money },
+    });
+  } catch {
+    // Already gone from this phone, which is what matters here. The row expires.
+  }
+}
+
+export async function fetchMoney(): Promise<MoneyView> {
+  return moneyRequest('/api/money');
+}
+
+export async function setCap(category: string, monthlyCap: number | null): Promise<void> {
+  await moneyRequest('/api/money/caps', {
+    method: 'PUT',
+    body: { category, monthly_cap: monthlyCap },
+  });
+}
+
+export async function setQuarterTarget(
+  targetAmount: number,
+  baselineAmount: number | null,
+): Promise<void> {
+  await moneyRequest('/api/money/target', {
+    method: 'PUT',
+    body: { target_amount: targetAmount, baseline_amount: baselineAmount },
+  });
+}
+
+export async function addCategoryRule(matchText: string, category: string): Promise<void> {
+  await moneyRequest('/api/money/rules', {
+    method: 'POST',
+    body: { match_text: matchText, category },
+  });
+}
+
+export async function refreshMoney(): Promise<{
+  ok: boolean;
+  error: string | null;
+  view: MoneyView;
+}> {
+  return moneyRequest('/api/money/refresh', { method: 'POST' });
 }

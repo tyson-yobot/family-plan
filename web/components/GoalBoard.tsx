@@ -54,13 +54,36 @@ function stepProgress(goal: Goal): { done: number; total: number } | null {
   return { done: goal.steps.filter((step) => step.done).length, total: goal.steps.length };
 }
 
+/**
+ * The four timeframes, shortest first, and the words for each.
+ *
+ * The order is load-bearing rather than decorative: a goal may only hang off
+ * one that is longer than itself, and the board reads that off this array.
+ */
+export const HORIZONS: { id: Goal['horizon']; label: string; blurb: string }[] = [
+  { id: 'ninety_day', label: 'Next 90 days', blurb: 'What you are actually working on now.' },
+  { id: 'one_year', label: 'This year', blurb: 'Where this year has to get to.' },
+  { id: 'three_year', label: '3 years', blurb: 'The medium game.' },
+  { id: 'ten_year', label: '10 years', blurb: 'The long one. It is allowed to be big.' },
+];
+
+export function horizonLabel(horizon: Goal['horizon']): string {
+  return HORIZONS.find((entry) => entry.id === horizon)?.label ?? 'Next 90 days';
+}
+
 export function GoalBoard({
   slug,
   goals,
+  goalAreas,
+  horizonProgress,
   onGoals,
 }: {
   slug: string;
   goals: Goal[];
+  /** Everywhere a goal can be filed. NOT the list the check-in scores. */
+  goalAreas: { id: string; label: string }[];
+  /** Keyed by a longer goal's id. Absent where nothing hangs off it yet. */
+  horizonProgress: Record<string, { done: number; total: number }>;
   /** Hands the whole new list back up, so the space and the board never disagree. */
   onGoals: (goals: Goal[]) => void;
 }) {
@@ -96,22 +119,46 @@ export function GoalBoard({
         <EmptyBoard />
       ) : null}
 
-      <ul className="flex flex-col gap-3">
-        {open.map((goal) => (
-          <li key={goal.id}>
-            <GoalCard
-              goal={goal}
-              slug={slug}
-              busy={busyId === goal.id}
-              onRun={(work) => run(goal.id, work)}
-            />
-          </li>
-        ))}
-      </ul>
+      {/*
+        Grouped by timeframe, shortest first.
+        A flat list stopped working the moment ten-year goals existed: the thing
+        somebody does this week and the thing they want by 2036 read as equals,
+        and the ninety-day work is what actually needs doing. A heading per
+        timeframe is only shown when something is in it, so a board with nothing
+        but ninety-day goals looks exactly as it did before.
+      */}
+      {HORIZONS.map((horizon) => {
+        const mine = open.filter((goal) => goal.horizon === horizon.id);
+        if (mine.length === 0) return null;
+        return (
+          <section key={horizon.id} className="mb-6">
+            {open.some((goal) => goal.horizon !== 'ninety_day') ? (
+              <h3 className="kicker mb-2 text-[11.5px] text-[var(--ink-soft)]">{horizon.label}</h3>
+            ) : null}
+            <ul className="flex flex-col gap-3">
+              {mine.map((goal) => (
+                <li key={goal.id}>
+                  <GoalCard
+                    goal={goal}
+                    slug={slug}
+                    goalAreas={goalAreas}
+                    allGoals={goals}
+                    progress={horizonProgress[goal.id] ?? null}
+                    busy={busyId === goal.id}
+                    onRun={(work) => run(goal.id, work)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
 
       {adding ? (
         <AddGoal
           slug={slug}
+          goalAreas={goalAreas}
+          allGoals={goals}
           onCancel={() => setAdding(false)}
           onAdded={(goal) => {
             onGoals([...goals, goal]);
@@ -308,11 +355,18 @@ function EmptyBoard() {
 function GoalCard({
   goal,
   slug,
+  goalAreas,
+  allGoals,
+  progress: derived,
   busy,
   onRun,
 }: {
   goal: Goal;
   slug: string;
+  goalAreas: { id: string; label: string }[];
+  allGoals: Goal[];
+  /** Counted from the shorter goals hanging off this one, or null if none are. */
+  progress: { done: number; total: number } | null;
   busy: boolean;
   onRun: (work: () => Promise<{ goal: Goal | null }>) => void;
 }) {
@@ -320,6 +374,12 @@ function GoalCard({
   const [addingStep, setAddingStep] = useState(false);
   const [closing, setClosing] = useState(false);
   const progress = stepProgress(goal);
+  const parent = goal.parent_goal_id
+    ? (allGoals.find((item) => item.id === goal.parent_goal_id) ?? null)
+    : null;
+  const areaLabel = goal.life_area
+    ? (goalAreas.find((area) => area.id === goal.life_area)?.label ?? goal.life_area)
+    : null;
 
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
@@ -345,6 +405,51 @@ function GoalCard({
           <Icon name="pencil" size={17} />
         </button>
       </div>
+
+      {/*
+        What this goal is part of, where it hangs off a longer one.
+        The point of the horizons is that a ninety-day win visibly moves a
+        three-year number, and this is the half of that a person sees on the
+        short goal: it is not floating, it is a piece of something.
+      */}
+      {parent ? (
+        <p className="mt-2 text-[12px] leading-snug text-[var(--ink-soft)]">
+          Part of: {parent.title}
+        </p>
+      ) : null}
+
+      {areaLabel ? (
+        <p className="mt-1 text-[12px] leading-snug text-[var(--ink-soft)]">{areaLabel}</p>
+      ) : null}
+
+      {/*
+        The other half: on a LONGER goal, how far the shorter ones under it have
+        come. Absent rather than zero when nothing is attached, because a bar at
+        nought says 'no progress' when the truth is 'nothing hangs off this yet'.
+      */}
+      {derived ? (
+        <div className="mt-3">
+          <div className="h-[5px] w-full overflow-hidden rounded-full bg-[var(--line)]">
+            <div
+              className="h-full rounded-full transition-[width] duration-500"
+              style={{
+                background: 'var(--accent)',
+                width: `${Math.round((derived.done / derived.total) * 100)}%`,
+              }}
+            />
+          </div>
+          <p className="mt-1.5 text-[12px] text-[var(--ink-soft)]">
+            {derived.done} of {derived.total} goals under this one done
+          </p>
+        </div>
+      ) : null}
+
+      {goal.weekly_habit ? (
+        <p className="mt-2 text-[12px] leading-snug" style={{ color: 'var(--accent-ink)' }}>
+          Weekly: {goal.weekly_habit}
+          {goal.weekly_target_count ? `, ${goal.weekly_target_count} times a week` : ''}
+        </p>
+      ) : null}
 
       <Visibility
         isPrivate={goal.is_private}
@@ -423,6 +528,8 @@ function GoalCard({
       {editing ? (
         <EditGoal
           goal={goal}
+          goalAreas={goalAreas}
+          allGoals={allGoals}
           onCancel={() => setEditing(false)}
           onSave={(patch) => {
             setEditing(false);
@@ -502,11 +609,15 @@ const fieldClass =
 
 function AddGoal({
   slug,
+  goalAreas,
+  allGoals,
   onAdded,
   onCancel,
   onProblem,
 }: {
   slug: string;
+  goalAreas: { id: string; label: string }[];
+  allGoals: Goal[];
   onAdded: (goal: Goal) => void;
   onCancel: () => void;
   onProblem: (message: string) => void;
@@ -515,7 +626,27 @@ function AddGoal({
   const [dueDate, setDueDate] = useState('');
   const [firstStep, setFirstStep] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
+  const [horizon, setHorizon] = useState<Goal['horizon']>('ninety_day');
+  const [lifeArea, setLifeArea] = useState('');
+  const [parentId, setParentId] = useState('');
+  const [habit, setHabit] = useState('');
+  const [habitCount, setHabitCount] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /*
+   * Which longer goals this one could hang off.
+   *
+   * Only goals that are genuinely longer, and only open ones. The server checks
+   * this too and is the thing that actually enforces it; offering an impossible
+   * choice and then refusing it would just be a worse way of saying the same
+   * thing.
+   */
+  const longerGoals = allGoals.filter(
+    (goal) =>
+      goal.status === 'open' &&
+      HORIZONS.findIndex((entry) => entry.id === goal.horizon) >
+        HORIZONS.findIndex((entry) => entry.id === horizon),
+  );
 
   async function save() {
     if (title.trim() === '' || busy) return;
@@ -526,6 +657,11 @@ function AddGoal({
         due_date: dueDate.trim() || null,
         first_step: firstStep.trim() || null,
         is_private: isPrivate,
+        horizon,
+        life_area: lifeArea || null,
+        parent_goal_id: parentId || null,
+        weekly_habit: habit.trim() || null,
+        weekly_target_count: habitCount === '' ? null : Number(habitCount),
       });
       onAdded(result.goal);
     } catch (error) {
@@ -566,6 +702,119 @@ function AddGoal({
         />
       </label>
 
+      {/*
+        The timeframe. Four buttons rather than a dropdown, because a dropdown
+        on a phone hides three of the four choices behind a tap, and the point
+        of this control is that somebody notices the long ones exist at all.
+      */}
+      <fieldset className="mt-4">
+        <legend className="text-[13.5px] font-medium">When is this for?</legend>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {HORIZONS.map((entry) => {
+            const on = horizon === entry.id;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => {
+                  setHorizon(entry.id);
+                  // A parent chosen for the old timeframe may no longer be
+                  // longer than this one, so it is cleared rather than left to
+                  // be refused on save.
+                  setParentId('');
+                }}
+                aria-pressed={on}
+                className="min-h-[44px] rounded-xl border px-3 text-[13px] font-semibold"
+                style={
+                  on
+                    ? { background: 'var(--accent)', color: 'var(--on-accent)', borderColor: 'transparent' }
+                    : { borderColor: 'var(--line)', color: 'var(--ink-soft)' }
+                }
+              >
+                {entry.label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      {/*
+        Attaching to a longer goal is OFFERED and never forced.
+        Nothing should float loose, but a goal somebody cannot place yet is
+        still a goal worth writing down, and refusing to save it until they
+        pick a parent would lose it.
+      */}
+      {longerGoals.length > 0 ? (
+        <label className="mt-4 block text-[13.5px] font-medium">
+          Part of a bigger goal? (optional)
+          <select
+            value={parentId}
+            onChange={(event) => setParentId(event.target.value)}
+            className={fieldClass}
+          >
+            <option value="">On its own</option>
+            {longerGoals.map((goal) => (
+              <option key={goal.id} value={goal.id}>
+                {goal.title}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-[12px] font-normal leading-relaxed text-[var(--ink-soft)]">
+            Hanging it off a longer goal means finishing this one visibly moves that one along.
+          </span>
+        </label>
+      ) : null}
+
+      <label className="mt-4 block text-[13.5px] font-medium">
+        Which part of life? (optional)
+        <select
+          value={lifeArea}
+          onChange={(event) => setLifeArea(event.target.value)}
+          className={fieldClass}
+        >
+          <option value="">Not sure yet</option>
+          {goalAreas.map((area) => (
+            <option key={area.id} value={area.id}>
+              {area.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {/*
+        The weekly habit. Optional, and explained rather than labelled, because
+        "weekly habit" means nothing on its own to an eleven year old.
+      */}
+      <label className="mt-4 block text-[13.5px] font-medium">
+        Something you do every week towards it? (optional)
+        <input
+          value={habit}
+          onChange={(event) => setHabit(event.target.value)}
+          placeholder="Go for a run, read before bed"
+          className={fieldClass}
+        />
+      </label>
+      {habit.trim() !== '' ? (
+        <label className="mt-3 block text-[13.5px] font-medium">
+          How many times a week?
+          <select
+            value={habitCount}
+            onChange={(event) => setHabitCount(event.target.value)}
+            className={fieldClass}
+          >
+            <option value="">However many I can</option>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+              <option key={n} value={n}>
+                {n} {n === 1 ? 'time' : 'times'}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-[12px] font-normal leading-relaxed text-[var(--ink-soft)]">
+            This gives you seven boxes to tick on the Week tab. Only you can see them.
+          </span>
+        </label>
+      ) : null}
+
       <PrivateChoice isPrivate={isPrivate} onChange={setIsPrivate} />
 
       <div className="mt-4 flex gap-2.5">
@@ -590,17 +839,58 @@ function AddGoal({
   );
 }
 
+interface GoalPatch {
+  title: string;
+  due_date: string | null;
+  life_area: string | null;
+  parent_goal_id: string | null;
+  weekly_habit: string | null;
+  weekly_target_count: number | null;
+}
+
+/**
+ * Changing a goal that is already on the board.
+ *
+ * This is where a weekly habit gets added to a goal that did not have one, and
+ * that is not a detail: the Week tab's empty state sends people here by name,
+ * so a habit that could only be set when a goal was first written would make
+ * that instruction a dead end.
+ *
+ * The timeframe itself is deliberately NOT editable here. Moving a goal between
+ * horizons can orphan or invert a parent link, the server refuses the invalid
+ * cases, and an error somebody cannot act on is worse than not offering it. A
+ * goal in the wrong timeframe is closed and rewritten, which is one extra tap
+ * and leaves an honest record of the change.
+ */
 function EditGoal({
   goal,
+  goalAreas,
+  allGoals,
   onSave,
   onCancel,
 }: {
   goal: Goal;
-  onSave: (patch: { title: string; due_date: string | null }) => void;
+  goalAreas: { id: string; label: string }[];
+  allGoals: Goal[];
+  onSave: (patch: GoalPatch) => void;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState(goal.title);
   const [dueDate, setDueDate] = useState(goal.due_date ?? '');
+  const [lifeArea, setLifeArea] = useState(goal.life_area ?? '');
+  const [parentId, setParentId] = useState(goal.parent_goal_id ?? '');
+  const [habit, setHabit] = useState(goal.weekly_habit ?? '');
+  const [habitCount, setHabitCount] = useState(
+    goal.weekly_target_count === null ? '' : String(goal.weekly_target_count),
+  );
+
+  const longerGoals = allGoals.filter(
+    (other) =>
+      other.status === 'open' &&
+      other.id !== goal.id &&
+      HORIZONS.findIndex((entry) => entry.id === other.horizon) >
+        HORIZONS.findIndex((entry) => entry.id === goal.horizon),
+  );
 
   return (
     <div className="mt-4 rounded-xl border border-[var(--line)] p-3.5">
@@ -622,6 +912,71 @@ function EditGoal({
           className={fieldClass}
         />
       </label>
+
+      <label className="mt-2.5 block text-[13px] font-medium">
+        Which part of life
+        <select
+          value={lifeArea}
+          onChange={(event) => setLifeArea(event.target.value)}
+          className={fieldClass}
+        >
+          <option value="">Not sure yet</option>
+          {goalAreas.map((area) => (
+            <option key={area.id} value={area.id}>
+              {area.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {longerGoals.length > 0 ? (
+        <label className="mt-2.5 block text-[13px] font-medium">
+          Part of a bigger goal
+          <select
+            value={parentId}
+            onChange={(event) => setParentId(event.target.value)}
+            className={fieldClass}
+          >
+            <option value="">On its own</option>
+            {longerGoals.map((other) => (
+              <option key={other.id} value={other.id}>
+                {other.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <label className="mt-2.5 block text-[13px] font-medium">
+        Something you do every week towards it
+        <input
+          value={habit}
+          onChange={(event) => setHabit(event.target.value)}
+          placeholder="Go for a run, read before bed"
+          className={fieldClass}
+        />
+      </label>
+      {habit.trim() !== '' ? (
+        <label className="mt-2.5 block text-[13px] font-medium">
+          How many times a week
+          <select
+            value={habitCount}
+            onChange={(event) => setHabitCount(event.target.value)}
+            className={fieldClass}
+          >
+            <option value="">However many I can</option>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+              <option key={n} value={n}>
+                {n} {n === 1 ? 'time' : 'times'}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-[12px] font-normal leading-relaxed text-[var(--ink-soft)]">
+            Gives you seven boxes on the Week tab. Only you can see them.
+          </span>
+        </label>
+      ) : null}
+
       <div className="mt-3 flex gap-2.5">
         <button
           type="button"
@@ -633,7 +988,19 @@ function EditGoal({
         <button
           type="button"
           disabled={title.trim() === ''}
-          onClick={() => onSave({ title: title.trim(), due_date: dueDate.trim() || null })}
+          onClick={() =>
+            onSave({
+              title: title.trim(),
+              due_date: dueDate.trim() || null,
+              life_area: lifeArea || null,
+              parent_goal_id: parentId || null,
+              weekly_habit: habit.trim() || null,
+              // Clearing the habit clears its count too, so a goal cannot be
+              // left with "three times a week" and nothing to do three times.
+              weekly_target_count:
+                habit.trim() === '' || habitCount === '' ? null : Number(habitCount),
+            })
+          }
           className="flex-1 rounded-xl px-4 py-2.5 text-[13.5px] font-bold disabled:opacity-50"
           style={{ background: 'var(--accent)', color: 'var(--on-accent)' }}
         >
