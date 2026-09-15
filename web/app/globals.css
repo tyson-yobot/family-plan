@@ -10,8 +10,11 @@
   --ink-soft: #57534e;
   --line: #e7e0d7;
   --card: #ffffff;
-  /* Replaced per person on the worksheet wrapper. */
+  /* Replaced per person on the worksheet wrapper, by accentStyle in lib/theme. */
   --accent: #334155;
+  --accent-ink: #334155;
+  --accent-tint: #ebedef;
+  --accent-wash: #f5f6f7;
 }
 
 html,
@@ -45,9 +48,72 @@ select {
   font-size: 16px;
 }
 
+/*
+ * The moments that mark finishing something. Small and warm rather than
+ * confetti: this is a grown adult's monthly review as much as an eleven year
+ * old's, and it has to feel good on both without being silly on either.
+ */
+@keyframes ring-draw {
+  from {
+    stroke-dashoffset: 176;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes tick-draw {
+  from {
+    stroke-dashoffset: 30;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes lift-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ring-draw {
+  stroke-dasharray: 176;
+  animation: ring-draw 720ms ease-out both;
+}
+
+.tick-draw {
+  stroke-dasharray: 30;
+  animation: tick-draw 400ms ease-out 480ms both;
+}
+
+.lift-in {
+  animation: lift-in 320ms ease-out both;
+}
+
+/*
+ * Reduced motion is honoured by showing the same thing, finished, rather than
+ * by hiding it. Somebody who turns motion off should still get the moment.
+ */
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
     animation: none !important;
+  }
+
+  .ring-draw,
+  .tick-draw {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+  }
+
+  .lift-in {
+    opacity: 1;
+    transform: none;
   }
 }

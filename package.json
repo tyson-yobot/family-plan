@@ -5,6 +5,8 @@
   "description": "Private family planning tool. Phase 1a worksheets.",
   "scripts": {
     "check:worksheet-ids": "node scripts/check-worksheet-ids.mjs",
-    "make:icons": "node scripts/make-icons.mjs"
+    "make:icons": "node scripts/make-icons.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "check:chunks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-chunks.mjs"
   }
 }

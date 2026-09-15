@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { IconBadge, type IconName } from './icons';
 
 export const SHORT_ANSWER_NUDGE = 'A full sentence helps more than a word or two.';
 
@@ -174,9 +175,35 @@ export function ChoicePicker({ label, options, value, onChange, problem }: Choic
   );
 }
 
-export function Card({ children }: { children: React.ReactNode }) {
+/**
+ * A question, or a small group of them.
+ *
+ * The optional icon and heading are what break up the wall of text. They are
+ * signposting only: the icon is decorative and the question's own label is
+ * still the thing a screen reader reads out, so nothing here is the only way to
+ * know what is being asked.
+ */
+export function Card({
+  children,
+  icon,
+  heading,
+}: {
+  children: React.ReactNode;
+  icon?: IconName;
+  heading?: string;
+}) {
   return (
     <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 shadow-[0_1px_2px_rgba(28,25,23,0.04)]">
+      {icon ? (
+        <div className={`flex items-center gap-3 ${heading ? 'mb-3' : 'mb-1'}`}>
+          <IconBadge name={icon} size={36} />
+          {heading ? (
+            <p className="min-w-0 text-[13px] font-semibold uppercase tracking-wide text-[var(--ink-soft)]">
+              {heading}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {children}
     </div>
   );
