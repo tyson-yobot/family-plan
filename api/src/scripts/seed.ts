@@ -1,9 +1,21 @@
 /**
- * Inserts the five people and prints each person's private link and QR code.
+ * Makes sure the five people and the one shared house link exist, and prints
+ * them.
  *
  * Run this locally, never in a build step: it prints full access tokens, and a
- * build log is not a place for them. Re-running it is safe. Anyone already in
- * the table keeps the token they have, so links already handed out keep working.
+ * build log is not a place for them. Re-running it is safe. Anybody already in
+ * the table keeps the token they have, so links already handed out keep
+ * working, and the house link is only created once.
+ *
+ * What the links mean now:
+ *
+ *   The house link is the one everybody uses. It opens the family board, which
+ *   is names, who has finished this month, and the date. Tapping your own name
+ *   asks for your own code. It is safe for all five to hold.
+ *
+ *   A person's own link is now only a bookmark. It lands on that person's own
+ *   sign-in screen and opens nothing without their code, so an old one already
+ *   on a phone home screen still works and is no longer a way in.
  */
 import 'dotenv/config';
 import { randomBytes } from 'node:crypto';
@@ -13,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import QRCode from 'qrcode';
 import { db, queryClient } from '../db/client.js';
-import { people } from '../db/schema.js';
+import { houseAccess, people } from '../db/schema.js';
 import type { TemplateName } from '../lib/templates.js';
 
 const FAMILY: { name: string; slug: string; templateType: TemplateName }[] = [
@@ -23,6 +35,8 @@ const FAMILY: { name: string; slug: string; templateType: TemplateName }[] = [
   { name: 'Mariah', slug: 'mariah', templateType: 'teen' },
   { name: 'Dylan', slug: 'dylan', templateType: 'young_adult' },
 ];
+
+const HOUSE_LABEL = 'Our house';
 
 /** 24 random bytes, 32 characters once base64url encoded. */
 function newToken(): string {
@@ -41,7 +55,26 @@ async function main() {
   const qrDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'qr-codes');
   mkdirSync(qrDir, { recursive: true });
 
-  const results: { name: string; url: string; qrPath: string; created: boolean }[] = [];
+  // The one link for the whole house.
+  const existingHouse = await db
+    .select()
+    .from(houseAccess)
+    .where(eq(houseAccess.label, HOUSE_LABEL))
+    .limit(1);
+  let houseToken: string;
+  let houseCreated = false;
+  if (existingHouse[0]) {
+    houseToken = existingHouse[0].accessToken;
+  } else {
+    houseToken = newToken();
+    await db.insert(houseAccess).values({ label: HOUSE_LABEL, accessToken: houseToken });
+    houseCreated = true;
+  }
+  const houseUrl = `${baseUrl}/h/${houseToken}`;
+  const houseQr = join(qrDir, 'family-plan.png');
+  await QRCode.toFile(houseQr, houseUrl, { width: 600, margin: 2 });
+
+  const results: { name: string; url: string; created: boolean }[] = [];
 
   for (const person of FAMILY) {
     const existing = await db.select().from(people).where(eq(people.slug, person.slug)).limit(1);
@@ -66,19 +99,23 @@ async function main() {
       created = true;
     }
 
-    const url = `${baseUrl}/f/${token}`;
-    const qrPath = join(qrDir, `${person.slug}.png`);
-    await QRCode.toFile(qrPath, url, { width: 600, margin: 2 });
-    results.push({ name: person.name, url, qrPath, created });
+    results.push({ name: person.name, url: `${baseUrl}/f/${token}`, created });
   }
 
-  console.log('\nPrivate links, one per person. Send each person only their own.\n');
+  console.log('\nThe one link for the whole house. This is the one to share.\n');
+  console.log(`  ${houseUrl}${houseCreated ? '' : '  (already existed, unchanged)'}`);
+  console.log(`  QR code: ${houseQr}`);
+  console.log('\nIt opens the family board. Tapping your own name asks for your own code.');
+
+  console.log('\nOld per-person links, still working, now only bookmarks.\n');
   for (const result of results) {
     console.log(`${result.name}${result.created ? '' : ' (already existed, link unchanged)'}`);
     console.log(`  ${result.url}`);
-    console.log(`  QR code: ${result.qrPath}`);
-    console.log('');
   }
+  console.log(
+    '\nEach one lands on that person’s own sign-in screen and opens nothing without\n' +
+      'their code, so an old one on a phone home screen keeps working.\n',
+  );
 
   await queryClient.end();
 }

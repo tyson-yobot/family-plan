@@ -102,8 +102,28 @@ export const TEMPLATES: Record<TemplateName, TemplateSpec> = {
   },
 };
 
-export const GOAL_STATUSES = ['Done', 'Partly', 'Not yet'] as const;
+/**
+ * What a check-in can say about a goal that is still open on somebody's board.
+ *
+ * These replaced Done / Partly / Not yet when the goal board arrived, because
+ * those three could only describe a goal that had just ended. A goal now lives
+ * across months until its owner closes it, so the list has to carry both the
+ * answer that keeps it and the three that end it.
+ *
+ * "Still working on it" leaves it on the board. The other three close it, as
+ * hit, missed, or deliberately dropped.
+ */
+export const LOOP_ANSWERS = [
+  'Still working on it',
+  'Hit it',
+  'Missed it',
+  'Changed my mind',
+] as const;
+
 export const CHORES_RATINGS = ['Great', 'OK', 'Rough'] as const;
 
-export type GoalStatus = (typeof GOAL_STATUSES)[number];
+export type LoopAnswer = (typeof LOOP_ANSWERS)[number];
 export type ChoresRating = (typeof CHORES_RATINGS)[number];
+
+/** The answers that mean the goal is not finished, and so ask for more. */
+export const UNFINISHED_ANSWERS: readonly LoopAnswer[] = ['Still working on it', 'Missed it'];

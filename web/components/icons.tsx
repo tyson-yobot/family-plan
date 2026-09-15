@@ -32,7 +32,14 @@ export type IconName =
   | 'users'
   | 'pen'
   | 'message'
-  | 'check';
+  | 'check'
+  | 'lock'
+  | 'plus'
+  | 'pencil'
+  | 'trophy'
+  | 'history'
+  | 'clipboard'
+  | 'signout';
 
 /** The drawing for each name, on a 24 by 24 grid, stroked in the current colour. */
 const PATHS: Record<IconName, React.ReactNode> = {
@@ -131,6 +138,46 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   check: <path d="m5 12.5 4.6 4.6L19 7.5" />,
+  lock: (
+    <>
+      <rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5" />
+      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+    </>
+  ),
+  plus: <path d="M12 5v14M5 12h14" />,
+  pencil: (
+    <>
+      <path d="M4 20h4L19 9a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5 4 20Z" />
+      <path d="m14.5 6.5 3.5 3.5" />
+    </>
+  ),
+  trophy: (
+    <>
+      <path d="M8 4h8v5a4 4 0 0 1-8 0V4Z" />
+      <path d="M8 5.5H5.5v1.5a3 3 0 0 0 3 3M16 5.5h2.5V7a3 3 0 0 1-3 3" />
+      <path d="M12 13v4M9 20h6" />
+    </>
+  ),
+  history: (
+    <>
+      <path d="M4 12a8 8 0 1 0 2.6-5.9" />
+      <path d="M4 4.5V9h4.5" />
+      <path d="M12 8v4.5l3 1.8" />
+    </>
+  ),
+  clipboard: (
+    <>
+      <rect x="5" y="4.5" width="14" height="16" rx="2.5" />
+      <path d="M9.5 4.5V3.2h5v1.3" />
+      <path d="M9 11h6M9 14.5h4" />
+    </>
+  ),
+  signout: (
+    <>
+      <path d="M14.5 4.5h3a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-3" />
+      <path d="M10 8.5 6 12l4 3.5M6 12h8.5" />
+    </>
+  ),
 };
 
 export function Icon({

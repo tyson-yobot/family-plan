@@ -1,19 +1,34 @@
 @import 'tailwindcss';
 
 /*
- * Mobile first. Most of these worksheets get filled in on a phone, so the base
- * sizes are phone sizes and the wider layout is the exception.
+ * Mobile first. Almost all of this gets used on a phone, so the base sizes are
+ * phone sizes and the wider layout is the exception.
+ *
+ * Dark is the app rather than a setting. There is no light theme underneath
+ * this and no toggle, so the tokens below are simply the colours, not the dark
+ * half of a pair. --page is set on html and body explicitly so that a phone
+ * with a light system theme cannot paint white behind anything.
  */
 :root {
-  --page: #fbf8f4;
-  --ink: #1c1917;
-  --ink-soft: #57534e;
-  --line: #e7e0d7;
-  --card: #ffffff;
-  /* Replaced per person on the worksheet wrapper, by accentStyle in lib/theme. */
-  --accent: #57534e;
-  --accent-ink: #57534e;
-  --accent-tint: #ebeaea;
+  --page: #0e1012;
+  --surface: #16191c;
+  --surface-2: #1e2226;
+  --line: #2b3137;
+  --ink: #f4f6f8;
+  --ink-soft: #a6afb8;
+  --silver: #c7cdd4;
+  --card: #16191c;
+  /* Trouble, and the three states a goal can end in. */
+  --bad: #ff7a70;
+  --good: #4fd18b;
+  --warn: #f0b34a;
+  /* Replaced per person by accentStyle in lib/theme. These are the shared-page
+     values: the landing page and the family board have no one person, so they
+     run on silver rather than on anybody's colour. */
+  --accent: #c7cdd4;
+  --accent-ink: #c7cdd4;
+  --accent-tint: #262b30;
+  --on-accent: #0e1012;
 }
 
 html,
@@ -23,15 +38,50 @@ body {
 }
 
 body {
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
+  /* --font-body and --font-display are set by next/font in app/layout.tsx, which
+     self-hosts both at build time. Nothing here loads a font over the network:
+     an external stylesheet would be a request that has to succeed before any of
+     this is readable, on exactly the bad connection where it will not. */
+  font-family: var(--font-body), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     sans-serif;
-  /* Room for the sticky footer buttons on a phone. */
   -webkit-text-size-adjust: 100%;
+}
+
+/*
+ * The condensed display face. Headers, month names, the tagline and the
+ * moments that mark finishing something. Bold where it is framing; the body
+ * face still carries every question somebody has to answer honestly.
+ */
+.display {
+  font-family: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.kicker {
+  font-family: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+/*
+ * The brushed-metal treatment, used on the tagline and on the one or two
+ * headlines that carry the whole screen. It is a gradient clipped to the text,
+ * so it has to carry a plain colour underneath for anything that cannot do
+ * background-clip, or the words vanish rather than merely looking flat.
+ */
+.steel {
+  color: var(--silver);
+}
+
+@supports (-webkit-background-clip: text) or (background-clip: text) {
+  .steel {
+    background: linear-gradient(135deg, #e6eaee 0%, #a8b2bc 45%, #e6eaee 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 /* Never shrink the tap target below the accessible minimum. */
@@ -40,6 +90,9 @@ button,
   min-height: 44px;
 }
 
+/* A summary is not a button and this rule does not reach it, so it is spelled
+   out where it is used rather than here. */
+
 /* Inputs at 16px or larger, so iOS does not zoom the page on focus. */
 input,
 textarea,
@@ -47,10 +100,18 @@ select {
   font-size: 16px;
 }
 
+/* The browser's own widgets are dark too, so a date picker or a spinner does
+   not arrive as a white rectangle in the middle of a dark screen. */
+:root {
+  color-scheme: dark;
+}
+
 /*
- * The moments that mark finishing something. Small and warm rather than
- * confetti: this is a grown adult's monthly review as much as an eleven year
- * old's, and it has to feel good on both without being silly on either.
+ * The moments that mark finishing something. These have more weight than they
+ * did: this is about getting after something, and a finish that barely moves
+ * does not read as one to an eleven year old. It still has to be right for a
+ * fifty three year old's monthly review, so it is a drawn mark rather than
+ * confetti.
  */
 @keyframes ring-draw {
   from {

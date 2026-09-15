@@ -1,8 +1,12 @@
 // Generates the app icons for the home-screen install, into web/public.
 //
 // The icon is five dots, one per person in their own accent colour, on the
-// same warm background the worksheets use. Deliberately not a logo or a
-// wordmark: this is a private family tool, not a product.
+// same charcoal the app itself runs on. Deliberately not a logo or a wordmark:
+// this is a private family tool, not a product.
+//
+// The colours here are copied from web/lib/theme.ts rather than read out of it,
+// because this is a plain script with no bundler and that file is TypeScript.
+// They have to be kept in step by hand, which is why they are named.
 //
 // Run from the repo root: node scripts/make-icons.mjs
 import { deflateSync } from 'node:zlib';
@@ -13,13 +17,13 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'web', 'public');
 
-const BACKGROUND = [0xfb, 0xf8, 0xf4];
+const BACKGROUND = [0x0e, 0x10, 0x12];
 const DOTS = [
-  [0x0f, 0x76, 0x6e], // Tyson, teal
-  [0xc0, 0x45, 0x3a], // Danyell, coral
-  [0xb4, 0x53, 0x09], // Aidan, amber
-  [0xbe, 0x18, 0x5d], // Mariah, pink
-  [0x43, 0x38, 0xca], // Dylan, indigo
+  [0x17, 0xa7, 0x9b], // Tyson, teal
+  [0xf2, 0x63, 0x7f], // Danyell, coral
+  [0xf0, 0x8a, 0x24], // Aidan, amber
+  [0xee, 0x64, 0xb0], // Mariah, pink
+  [0x8c, 0x99, 0xff], // Dylan, indigo
 ];
 
 function crc32(buf) {

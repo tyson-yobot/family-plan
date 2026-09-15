@@ -24,7 +24,7 @@ function Hint({ children }: { children: React.ReactNode }) {
  */
 function Problem({ children }: { children: React.ReactNode }) {
   return (
-    <p data-problem className="mt-1.5 text-[13px] font-medium leading-snug text-[#B3261E]">
+    <p data-problem className="mt-1.5 text-[13px] font-medium leading-snug text-[var(--bad)]">
       {children}
     </p>
   );
@@ -55,8 +55,8 @@ export function TextAnswer({
 }: TextAnswerProps) {
   const id = useId();
   const shared =
-    'mt-2 w-full rounded-xl border bg-[var(--card)] px-3.5 py-3 text-[16px] leading-relaxed outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/25';
-  const border = problem ? 'border-[#B3261E]' : 'border-[var(--line)]';
+    'mt-2 w-full rounded-xl border bg-[var(--page)] px-3.5 py-3 text-[16px] leading-relaxed outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/30';
+  const border = problem ? 'border-[var(--bad)]' : 'border-[var(--line)]';
 
   return (
     <div>
@@ -99,6 +99,21 @@ interface ScorePickerProps {
   problem?: string;
 }
 
+/**
+ * The words on the ends of the scale.
+ *
+ * The pickers used to be bare numbers, which asks an eleven year old to guess
+ * which end is the good one. These are the only two labels, at the bottom and
+ * the top, because putting a word on all ten turns a quick judgement into ten
+ * things to read.
+ *
+ * They are the same words on the one-to-five scale as on the one-to-ten one on
+ * purpose: the ends mean the same thing on both, and giving the teen worksheet
+ * gentler words would be telling two people the scale means two things.
+ */
+export const SCALE_LOW = 'Rough';
+export const SCALE_HIGH = 'As good as it gets';
+
 export function ScorePicker({ label, min, max, value, onChange, problem }: ScorePickerProps) {
   const options: number[] = [];
   for (let i = min; i <= max; i++) options.push(i);
@@ -120,17 +135,37 @@ export function ScorePicker({ label, min, max, value, onChange, problem }: Score
               type="button"
               aria-pressed={selected}
               onClick={() => onChange(option)}
+              // The number is what the picker is for, so the low and high
+              // words below are labelled on the buttons themselves as well.
+              // Otherwise the only thing telling somebody using a screen
+              // reader which end is which is a caption they have already
+              // passed.
+              aria-label={
+                option === min
+                  ? `${option}, ${SCALE_LOW}`
+                  : option === max
+                    ? `${option}, ${SCALE_HIGH}`
+                    : String(option)
+              }
               className={`rounded-xl border py-2.5 text-[15px] font-semibold transition-colors ${
                 selected
-                  ? 'border-transparent text-white'
-                  : 'border-[var(--line)] bg-[var(--card)] text-[var(--ink)]'
+                  ? 'border-transparent'
+                  : 'border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)]'
               }`}
-              style={selected ? { background: 'var(--accent)' } : undefined}
+              style={selected ? { background: 'var(--accent)', color: 'var(--on-accent)' } : undefined}
             >
               {option}
             </button>
           );
         })}
+      </div>
+      <div className="mt-1.5 flex items-baseline justify-between gap-3" aria-hidden="true">
+        <span className="text-[12px] text-[var(--ink-soft)]">
+          {min} · {SCALE_LOW}
+        </span>
+        <span className="text-right text-[12px] text-[var(--ink-soft)]">
+          {max} · {SCALE_HIGH}
+        </span>
       </div>
       {problem ? <Problem>{problem}</Problem> : null}
     </div>
@@ -160,10 +195,10 @@ export function ChoicePicker({ label, options, value, onChange, problem }: Choic
               onClick={() => onChange(option)}
               className={`rounded-xl border px-4 py-3 text-left text-[15px] font-medium transition-colors ${
                 selected
-                  ? 'border-transparent text-white'
-                  : 'border-[var(--line)] bg-[var(--card)] text-[var(--ink)]'
+                  ? 'border-transparent'
+                  : 'border-[var(--line)] bg-[var(--surface-2)] text-[var(--ink)]'
               }`}
-              style={selected ? { background: 'var(--accent)' } : undefined}
+              style={selected ? { background: 'var(--accent)', color: 'var(--on-accent)' } : undefined}
             >
               {option}
             </button>
@@ -193,7 +228,7 @@ export function Card({
   heading?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 shadow-[0_1px_2px_rgba(28,25,23,0.04)]">
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
       {icon ? (
         <div className={`flex items-center gap-3 ${heading ? 'mb-3' : 'mb-1'}`}>
           <IconBadge name={icon} size={36} />

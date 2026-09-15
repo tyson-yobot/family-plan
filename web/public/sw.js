@@ -4,7 +4,7 @@
 // It deliberately caches only the app shell assets, never a worksheet page and
 // never an API response. Worksheet answers are private and a cached page would
 // leave someone's answers readable on a shared phone after they had finished.
-const CACHE = 'family-plan-shell-v1';
+const CACHE = 'family-plan-shell-v2';
 const SHELL = ['/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {

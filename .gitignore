@@ -7,3 +7,7 @@ dist/
 qr-codes/
 *.tsbuildinfo
 scratch/
+
+# The visual mockup Tyson wrote to direct the rebrand. Direction, not code:
+# it is never shipped and never imported, so it stays out of the repository.
+family-plan-visual-mockup.html

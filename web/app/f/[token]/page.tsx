@@ -1,12 +1,15 @@
-import { WorksheetFlow } from '@/components/WorksheetFlow';
+import { LinkLanding } from '@/components/LinkLanding';
 
 export const dynamic = 'force-dynamic';
 
-export default async function WorksheetPage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
+/**
+ * A person's own old link, which is what is on everybody's home screen already.
+ *
+ * It no longer opens a worksheet by itself. It works out whose link it is and
+ * lands on that person's own sign-in screen, which is one tap from where it
+ * used to go and is now behind their own code.
+ */
+export default async function PersonLinkPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  return <WorksheetFlow token={token} />;
+  return <LinkLanding token={token} />;
 }

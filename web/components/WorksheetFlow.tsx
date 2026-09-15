@@ -2,15 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  editGoal,
   fetchDraft,
   fetchForm,
+  NeedsCodeError,
   saveDraft,
-  submitWorksheet,
+  submitCheckIn,
   type FormInfo,
   type GoalStatusEntry,
   type StoredDraft,
 } from '@/lib/api';
-import { accentStyle, accentFor, initialsFor } from '@/lib/theme';
+import { monthName } from '@/lib/month';
 import { partsForSections, type Part, type Unit } from '@/lib/chunks';
 import {
   areaIcon,
@@ -31,7 +33,26 @@ import { Icon, IconBadge } from './icons';
 import { FinishMark, SectionDone } from './Celebrate';
 import { WhatThisIs } from './WhatThisIs';
 
-const GOAL_STATUSES = ['Done', 'Partly', 'Not yet'] as const;
+/**
+ * What a check-in can say about a goal that is still open on the board.
+ *
+ * These replaced Done / Partly / Not yet when the goal board arrived. Those
+ * three could only describe a goal that had just ended, and a goal now lives
+ * across months until its owner closes it, so the list has to carry both the
+ * answer that keeps it and the three that end it.
+ *
+ * "Still working on it" is first because it is the commonest true answer to a
+ * ninety-day goal three weeks in, and putting it anywhere else would push
+ * people towards calling something missed when it is simply not finished.
+ *
+ * The same four live in api/src/lib/templates.ts, which is what actually
+ * enforces them. If these drift, a submission is refused over an answer the
+ * screen offered.
+ */
+const LOOP_ANSWERS = ['Still working on it', 'Hit it', 'Missed it', 'Changed my mind'] as const;
+
+/** The answers that mean it is not finished, which is what asks for more. */
+const UNFINISHED: readonly string[] = ['Still working on it', 'Missed it'];
 
 type Payload = Record<string, any>;
 
@@ -43,21 +64,6 @@ interface Step {
   part?: number;
   /** How many screens that section is asked over, for section steps only. */
   partCount?: number;
-}
-
-/** Turns 2026-09 into "September 2026", because nobody says "cycle label". */
-function monthName(cycleLabel: string): string {
-  const [year, month] = cycleLabel.split('-').map(Number);
-  if (!year || !month) return cycleLabel;
-  // The date is built in UTC, so it has to be read back in UTC. Formatting it
-  // in the phone's own timezone turns the first of the month into the last day
-  // of the month before, anywhere west of Greenwich.
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-  return formatter.format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
 /** The keys the page uses to remember where someone was. Never submitted. */
@@ -101,7 +107,30 @@ function stripUiState(payload: Payload): Payload {
   return copy;
 }
 
-export function WorksheetFlow({ token }: { token: string }) {
+/**
+ * The check-in itself, now one tab inside somebody's own space rather than a
+ * page of its own.
+ *
+ * Two things changed about it and nothing else did. It is reached through the
+ * person's own code rather than through a link, so every request it makes
+ * carries a session the server checks. And the screen at the start that used to
+ * read last month's answers back now reads the goal board instead, so a goal
+ * set in September is still being asked about in November rather than having
+ * quietly vanished at the next check-in.
+ *
+ * The six sections, their questions, their order and their rules are untouched.
+ */
+export function WorksheetFlow({
+  slug,
+  onNeedsCode,
+  onFinished,
+}: {
+  slug: string;
+  /** The session went away mid-check-in. The space puts the door back up. */
+  onNeedsCode: () => void;
+  /** A check-in landed, so the goal board above this has changed underneath it. */
+  onFinished: () => void;
+}) {
   const [info, setInfo] = useState<FormInfo | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'invalid' | 'failed' | 'ready'>(
     'loading',
@@ -174,6 +203,8 @@ export function WorksheetFlow({ token }: { token: string }) {
   const [saveProblem, setSaveProblem] = useState('');
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  /** What just went onto the board, so the finish screen can say who can see it. */
+  const [newGoals, setNewGoals] = useState<{ id: string; title: string }[]>([]);
 
   const topRef = useRef<HTMLDivElement | null>(null);
 
@@ -182,13 +213,9 @@ export function WorksheetFlow({ token }: { token: string }) {
     let cancelled = false;
     (async () => {
       try {
-        const loaded = await fetchForm(token);
+        const loaded = await fetchForm(slug);
         if (cancelled) return;
-        if (!loaded) {
-          setLoadState('invalid');
-          return;
-        }
-        const draft = await fetchDraft(token);
+        const draft = await fetchDraft(slug);
         if (cancelled) return;
 
         setInfo(loaded);
@@ -218,6 +245,10 @@ export function WorksheetFlow({ token }: { token: string }) {
         setLoadState('ready');
       } catch (error) {
         if (cancelled) return;
+        if (error instanceof NeedsCodeError) {
+          onNeedsCode();
+          return;
+        }
         setLoadError(error instanceof Error ? error.message : 'Something went wrong.');
         setLoadState('failed');
       }
@@ -225,10 +256,19 @@ export function WorksheetFlow({ token }: { token: string }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [onNeedsCode, slug]);
 
   const worksheet = info ? WORKSHEETS[info.template_type] : null;
-  const accent = info ? accentFor(info.slug) : '#334155';
+
+  /*
+   * The person's own colour, as the custom property rather than as a hex.
+   *
+   * The space around this check-in sets --accent, --accent-tint and --on-accent
+   * on its own wrapper, so every screen in here inherits them. Reading the hex
+   * again here would be a second copy of the same decision, and the two would
+   * disagree the first time somebody changed one of them.
+   */
+  const accent = 'var(--accent)';
 
   /**
    * Each section cut into the two or three question screens it should be asked
@@ -307,12 +347,33 @@ export function WorksheetFlow({ token }: { token: string }) {
     setPayload((current) => {
       const next = { ...current };
       let changed = false;
-      if (info.previous_goals.length > 0 && !Array.isArray(next.goal_status)) {
-        next.goal_status = info.previous_goals.map((goal) => ({
-          goal,
-          status: '',
-          reflection: '',
-        }));
+      /*
+       * The goals waiting to be answered about, seeded from the board.
+       *
+       * Reconciled rather than seeded once, because the board is not frozen
+       * while a check-in is open: a goal can be added or closed from the goal
+       * board on the same phone, or from another one, between starting this and
+       * finishing it. A draft that remembered an older list would then ask about
+       * a goal that is no longer open, or never ask about one that is, and the
+       * server refuses both.
+       *
+       * Answers already given are kept, matched by goal id.
+       */
+      const openIds = info.open_goals.map((goal) => goal.id);
+      const existing: GoalStatusEntry[] = Array.isArray(next.goal_status) ? next.goal_status : [];
+      const sameShape =
+        existing.length === openIds.length &&
+        existing.every((entry, i) => entry?.goal_id === openIds[i]);
+      if (!sameShape) {
+        next.goal_status = info.open_goals.map((goal) => {
+          const already = existing.find((entry) => entry?.goal_id === goal.id);
+          return {
+            goal_id: goal.id,
+            goal: goal.title,
+            status: already?.status ?? '',
+            reflection: already?.reflection ?? '',
+          };
+        });
         changed = true;
       }
       if (info.my_area && (!next.my_area || !next.my_area.name)) {
@@ -394,17 +455,37 @@ export function WorksheetFlow({ token }: { token: string }) {
     markTouched();
   }, [clearProblem, markTouched]);
 
-  const setGoalStatus = useCallback((row: number, part: 'status' | 'reflection', value: string) => {
-    setPayload((current) => {
-      const list: GoalStatusEntry[] = Array.isArray(current.goal_status)
-        ? [...current.goal_status]
-        : [];
-      list[row] = { ...list[row], [part]: value } as GoalStatusEntry;
-      return { ...current, goal_status: list };
-    });
-    if (part === 'status') clearProblem(`status.${row}`);
-    markTouched();
-  }, [clearProblem, markTouched]);
+  const setGoalStatus = useCallback(
+    (row: number, part: 'status' | 'reflection', value: string, goal?: { id: string; title: string }) => {
+      setPayload((current) => {
+        const list: GoalStatusEntry[] = Array.isArray(current.goal_status)
+          ? [...current.goal_status]
+          : [];
+        /*
+         * The goal this answer is about, filled in here as well as by the
+         * reconcile effect.
+         *
+         * Without it, writing into a row the effect had not populated produced
+         * an entry with no goal_id and no goal text, and the server refuses the
+         * whole submission over "the goal being answered at position N". The
+         * screen one level up already has exactly this fallback for exactly this
+         * reason; the setter not having it was one refactor away from a real
+         * defect nobody would have found until somebody pressed submit.
+         */
+        const base = list[row] ?? {
+          goal_id: goal?.id ?? '',
+          goal: goal?.title ?? '',
+          status: '',
+          reflection: '',
+        };
+        list[row] = { ...base, [part]: value } as GoalStatusEntry;
+        return { ...current, goal_status: list };
+      });
+      if (part === 'status') clearProblem(`status.${row}`);
+      markTouched();
+    },
+    [clearProblem, markTouched],
+  );
 
   /**
    * The questions actually on this screen, now that a section is asked over
@@ -455,14 +536,19 @@ export function WorksheetFlow({ token }: { token: string }) {
       if (!current || !info || !worksheet) return {};
       const found: Record<string, string> = {};
 
-      if (current.kind === 'loop' && info.previous_goals.length > 0) {
+      if (current.kind === 'loop' && info.open_goals.length > 0) {
         const list: GoalStatusEntry[] = payload.goal_status ?? [];
-        info.previous_goals.forEach((_, i) => {
-          if (!list[i]?.status) found[`status.${i}`] = 'Pick one of the three.';
+        info.open_goals.forEach((_, i) => {
+          if (!list[i]?.status) found[`status.${i}`] = 'Pick one of the four.';
         });
         if (info.template_type !== 'adult') {
-          const status = list[0]?.status;
-          if ((status === 'Partly' || status === 'Not yet') && !(payload.try_differently ?? '').trim()) {
+          // Across every open goal, not just the first. A teen can add goals of
+          // their own now, so "the first answer" was an arbitrary one of
+          // several. The same rule is in api/src/lib/validate.ts; if these two
+          // disagree the screen asks for something the server does not want, or
+          // refuses a submission over a question nobody was shown.
+          const unfinished = list.some((entry) => UNFINISHED.includes(entry?.status ?? ''));
+          if (unfinished && !(payload.try_differently ?? '').trim()) {
             found.try_differently = 'This one needs an answer.';
           }
         }
@@ -525,14 +611,14 @@ export function WorksheetFlow({ token }: { token: string }) {
       }
       const toSave = { ...nextPayload, [UI_KEY]: uiFor(nextStep) };
       try {
-        await saveDraft(token, {
-          cycle_label: info.current_cycle_label,
-          payload: toSave,
-          started_at: startedAt,
-        });
+        await saveDraft(slug, { payload: toSave, started_at: startedAt });
         setSaveProblem('');
         return true;
-      } catch {
+      } catch (error) {
+        if (error instanceof NeedsCodeError) {
+          onNeedsCode();
+          return false;
+        }
         setSaveProblem(
           'Your answers could not be saved just now. They are still on this screen. ' +
             'Press continue again in a moment.',
@@ -540,7 +626,7 @@ export function WorksheetFlow({ token }: { token: string }) {
         return false;
       }
     },
-    [info, startedAt, token, uiFor],
+    [info, onNeedsCode, slug, startedAt, uiFor],
   );
 
   const goTo = useCallback((next: number) => {
@@ -655,19 +741,51 @@ export function WorksheetFlow({ token }: { token: string }) {
     setBusy(true);
     setSaveProblem('');
     try {
-      await submitWorksheet(token, {
-        cycle_label: info.current_cycle_label,
+      const result = await submitCheckIn(slug, {
         payload: stripUiState(payload),
         started_at: startedAt,
       });
+      setNewGoals(result.created_goals ?? []);
       setSubmitted(true);
       window.scrollTo({ top: 0 });
+      // The board above this has just changed: goals closed, new ones opened.
+      // Telling the space rather than working it out here keeps one set of
+      // rules for what a check-in does to a board, on the server.
+      onFinished();
     } catch (error) {
-      setSaveProblem(error instanceof Error ? error.message : 'It could not be submitted.');
+      if (error instanceof NeedsCodeError) {
+        onNeedsCode();
+        return;
+      }
+      /*
+       * A refusal because the board moved underneath this check-in is
+       * recoverable, and was not.
+       *
+       * The board can change from the goal board on another phone, or in
+       * another tab, while this sits open. The answers then describe a goal that
+       * is no longer open, or miss one that now is, and the server refuses
+       * both. `info` was fetched once, so nothing re-ran the reconciliation and
+       * pressing submit again failed in exactly the same way, forever, with a
+       * message that gave nobody a reason to try reloading.
+       *
+       * So the form is read again and the reconciliation re-runs, which is what
+       * the effect does whenever `info` changes. The person presses submit a
+       * second time and it goes.
+       */
+      try {
+        const fresh = await fetchForm(slug);
+        setInfo(fresh);
+        setSaveProblem(
+          'Your goals changed somewhere else while this was open, so this has been brought up ' +
+            'to date. Check the first screen, then send it again.',
+        );
+      } catch {
+        setSaveProblem(error instanceof Error ? error.message : 'It could not be submitted.');
+      }
     } finally {
       setBusy(false);
     }
-  }, [info, payload, startedAt, token]);
+  }, [info, onFinished, onNeedsCode, payload, slug, startedAt]);
 
   const nudgeFor = useCallback(
     (key: string, value: string | undefined) =>
@@ -680,27 +798,15 @@ export function WorksheetFlow({ token }: { token: string }) {
   }, []);
 
   if (loadState === 'loading') {
-    return (
-      <main className="mx-auto max-w-md px-5 py-16">
-        <p className="text-[15px] text-[var(--ink-soft)]">Opening your check-in.</p>
-      </main>
-    );
+    return <p className="text-[15px] text-[var(--ink-soft)]">Opening your check-in.</p>;
   }
 
-  if (loadState === 'invalid') {
+  if (loadState === 'invalid' || loadState === 'failed' || !info || !worksheet) {
     return (
-      <main className="mx-auto max-w-md px-5 py-16">
-        <p className="text-[17px]">This link isn&apos;t valid.</p>
-      </main>
-    );
-  }
-
-  if (loadState === 'failed' || !info || !worksheet) {
-    return (
-      <main className="mx-auto max-w-md px-5 py-16">
+      <div>
         <p className="text-[17px]">Your check-in could not be opened just now.</p>
         <p className="mt-2 text-[15px] text-[var(--ink-soft)]">{loadError}</p>
-      </main>
+      </div>
     );
   }
 
@@ -709,7 +815,7 @@ export function WorksheetFlow({ token }: { token: string }) {
   // A draft from an earlier month. Asked about before anything is rendered.
   if (staleDraft) {
     return (
-      <Shell info={info} accent={accent} progress={null} screenCount={screenCount}>
+      <Shell progress={null} template={info.template_type} accent="var(--accent)" screenCount={screenCount}>
         <h1 className="text-[22px] font-semibold leading-tight">You have an unfinished one</h1>
         <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
           You started a check-in for {monthName(staleDraft.cycle_label)} and did not finish it.
@@ -719,8 +825,8 @@ export function WorksheetFlow({ token }: { token: string }) {
         <div className="mt-6 flex flex-col gap-3">
           <button
             type="button"
-            className="rounded-xl px-4 py-3 text-[15px] font-semibold text-white"
-            style={{ background: accent }}
+            className="rounded-xl px-4 py-3 text-[15px] font-bold"
+            style={{ background: accent, color: 'var(--on-accent)' }}
             onClick={() => {
               setPayload(staleDraft.payload ?? {});
               setStartedAt(staleDraft.started_at);
@@ -739,7 +845,7 @@ export function WorksheetFlow({ token }: { token: string }) {
           </button>
           <button
             type="button"
-            className="rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-[15px] font-semibold"
+            className="rounded-xl border border-[var(--line)] px-4 py-3 text-[15px] font-semibold"
             onClick={() => {
               setPayload({});
               setFreshStarts((n) => n + 1);
@@ -758,41 +864,70 @@ export function WorksheetFlow({ token }: { token: string }) {
   }
 
   if (submitted) {
-    // The statuses they just filled in are the ones that describe last
-    // cycle's goals, so they are what "last time" means here. info.last_cycle_status
-    // is one cycle older again, and is only a fallback.
-    const closedThisTime: GoalStatusEntry[] = Array.isArray(payload.goal_status)
+    /*
+     * The goals they just closed, out of what they answered on the way in. Read
+     * from the payload rather than asked back from the server, because at this
+     * moment it is the same thing and the phone already has it.
+     */
+    const answered: GoalStatusEntry[] = Array.isArray(payload.goal_status)
       ? payload.goal_status
-      : (info.last_cycle_status ?? []);
-    const doneGoal = closedThisTime.find((entry) => entry.status === 'Done');
+      : [];
+    const hit = answered.filter((entry) => entry.status === 'Hit it');
+    const stillGoing = answered.filter((entry) => entry.status === 'Still working on it').length;
+
     return (
-      <Shell info={info} accent={accent} progress={null} screenCount={screenCount}>
+      <Shell progress={null} template={info.template_type} accent="var(--accent)" screenCount={screenCount}>
         {/*
           The one place in the whole check-in that is allowed to be a moment.
           It says the same thing to somebody who scored themselves low as to
           somebody who scored high, because what it is pleased about is that
-          they sat down and finished it.
+          they sat down and finished it, not what they found when they did.
         */}
-        <div className="lift-in flex flex-col items-center py-4 text-center">
-          <FinishMark size={72} />
-          <h1 className="mt-5 text-[24px] font-semibold leading-tight">
-            That is {monthName(info.current_cycle_label)} done, {info.name}
+        <div className="lift-in flex flex-col items-center py-6 text-center">
+          <FinishMark size={84} />
+          <p className="kicker steel mt-6 text-[13px]">To a bigger life</p>
+          <h1 className="display mt-2 text-[32px] uppercase leading-none">
+            That is {monthName(info.current_cycle_label).split(' ')[0]},
+            <br />
+            {info.name}
           </h1>
-          <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
-            Sitting down and answering all of that honestly is the hard part, and you just did
-            it. See you next month.
+          <p className="mt-4 max-w-[300px] text-[15px] leading-relaxed text-[var(--ink-soft)]">
+            You sat down and told yourself the truth. That is the hard part, and you just did it.
           </p>
         </div>
-        {doneGoal ? (
-          <p className="mt-6 text-[15px] leading-relaxed text-[var(--ink-soft)]">
-            Last time, you finished this: {doneGoal.goal}
-          </p>
+
+        {hit.length > 0 ? (
+          <div
+            className="mt-2 rounded-2xl p-4"
+            style={{ background: 'var(--accent-tint)' }}
+          >
+            <p className="text-[14px] font-semibold leading-snug">
+              {hit.length === 1 ? 'You hit this one' : `You hit ${hit.length} of them`}
+            </p>
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {hit.map((entry) => (
+                <li key={entry.goal_id} className="text-[14px] leading-snug text-[var(--ink-soft)]">
+                  {entry.goal}
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
-        {info.last_initiative_note ? (
-          <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
-            Last time, you also did this on your own: {info.last_initiative_note}
-          </p>
+
+        <p className="mt-5 text-[14.5px] leading-relaxed text-[var(--ink-soft)]">
+          {stillGoing > 0
+            ? `${stillGoing === 1 ? 'One goal is' : `${stillGoing} goals are`} still going, and whatever you just wrote down is on your board now. That is the bit between today and next month.`
+            : 'Whatever you just wrote down is on your board now. That is the bit between today and next month.'}
+        </p>
+
+        {newGoals.length > 0 ? (
+          <NewGoalVisibility slug={slug} goals={newGoals} onChanged={onFinished} />
         ) : null}
+
+        <p className="mt-5 text-[13px] leading-relaxed text-[var(--ink-soft)]">
+          Nobody can see what you wrote in here, or the scores you gave. That is yours and it stays
+          yours.
+        </p>
       </Shell>
     );
   }
@@ -806,7 +941,7 @@ export function WorksheetFlow({ token }: { token: string }) {
   // already rewritten.
   if (info.submitted_this_cycle && !startingAgain && !resumedThisMonth) {
     return (
-      <Shell info={info} accent={accent} progress={null} screenCount={screenCount}>
+      <Shell progress={null} template={info.template_type} accent="var(--accent)" screenCount={screenCount}>
         <div className="flex items-center gap-3">
           <FinishMark size={44} />
           <h1 className="text-[22px] font-semibold leading-tight">
@@ -884,9 +1019,9 @@ export function WorksheetFlow({ token }: { token: string }) {
 
   return (
     <Shell
-      info={info}
-      accent={accent}
       progress={progress}
+      template={info.template_type}
+      accent="var(--accent)"
       topRef={topRef}
       screenCount={screenCount}
       overviewOpen={overviewOpen}
@@ -930,34 +1065,56 @@ export function WorksheetFlow({ token }: { token: string }) {
         </div>
       ) : null}
 
+      {/*
+        Closing the loop, rebuilt on the goal board.
+
+        It used to read the goals out of last month's answers, which meant a
+        ninety-day goal set in September was asked about once, in October, and
+        then silently gone. It now asks about whatever is still open on the
+        board, however many months ago it was written, and what somebody answers
+        here is what closes it or leaves it open. There is one list of goals in
+        this tool now rather than two that drift apart.
+      */}
       {step?.kind === 'loop' ? (
         <div className="flex flex-col gap-5">
-          {info.previous_goals.length > 0 ? (
+          {info.open_goals.length > 0 ? (
             <>
               <div>
                 <div className="flex items-center gap-3">
                   <IconBadge name={LOOP_ICON} size={40} />
-                  <h1 className="text-[22px] font-semibold leading-tight">Closing the loop</h1>
+                  <h1 className="display text-[26px] uppercase leading-none">Your goals</h1>
                 </div>
                 <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
+                  {info.open_goals.length === 1
+                    ? 'One thing is still open on your board. Say where it got to.'
+                    : `${info.open_goals.length} things are still open on your board. Say where each one got to.`}
+                </p>
+                <p className="mt-2 text-[15px] leading-relaxed text-[var(--ink-soft)]">
                   {worksheet.doneMeans}
                 </p>
               </div>
-              {info.previous_goals.map((goal, i) => {
+              {info.open_goals.map((goal, i) => {
                 const entry: GoalStatusEntry = payload.goal_status?.[i] ?? {
-                  goal,
+                  goal_id: goal.id,
+                  goal: goal.title,
                   status: '',
                   reflection: '',
                 };
                 return (
-                  <Card key={`${goal}-${i}`}>
-                    <p className="text-[15px] font-medium leading-snug">{goal}</p>
+                  <Card key={goal.id}>
+                    <p className="text-[15px] font-medium leading-snug">{goal.title}</p>
+                    <p className="mt-1 text-[12.5px] text-[var(--ink-soft)]">
+                      Set in {monthName(goal.created_cycle_label)}
+                      {goal.due_date ? ` · due ${goal.due_date}` : ''}
+                    </p>
                     <div className="mt-3">
                       <ChoicePicker
-                        label="How did it go?"
-                        options={[...GOAL_STATUSES]}
+                        label="Where did it get to?"
+                        options={[...LOOP_ANSWERS]}
                         value={entry.status || undefined}
-                        onChange={(value) => setGoalStatus(i, 'status', value)}
+                        onChange={(value) =>
+                          setGoalStatus(i, 'status', value, { id: goal.id, title: goal.title })
+                        }
                         problem={problems[`status.${i}`]}
                       />
                     </div>
@@ -965,17 +1122,35 @@ export function WorksheetFlow({ token }: { token: string }) {
                       <TextAnswer
                         label="What happened, in one line (optional)"
                         value={entry.reflection ?? ''}
-                        onChange={(value) => setGoalStatus(i, 'reflection', value)}
+                        onChange={(value) =>
+                          setGoalStatus(i, 'reflection', value, { id: goal.id, title: goal.title })
+                        }
                         onBlur={() => markBlurred(`reflection.${i}`)}
                         nudge={nudgeFor(`reflection.${i}`, entry.reflection)}
                       />
                     </div>
+                    {/*
+                      What the answer is about to do, said before it happens. A
+                      goal quietly disappearing off the board after a check-in is
+                      exactly the thing this release exists to stop, so the
+                      screen says which answers take it off and which keep it.
+                    */}
+                    {entry.status === 'Still working on it' ? (
+                      <p className="mt-3 text-[12.5px] leading-snug text-[var(--ink-soft)]">
+                        It stays on your board, and next month asks you again.
+                      </p>
+                    ) : entry.status ? (
+                      <p className="mt-3 text-[12.5px] leading-snug text-[var(--ink-soft)]">
+                        This one comes off your board when you send this.
+                      </p>
+                    ) : null}
                   </Card>
                 );
               })}
               {info.template_type !== 'adult' &&
-              (payload.goal_status?.[0]?.status === 'Partly' ||
-                payload.goal_status?.[0]?.status === 'Not yet') ? (
+              (payload.goal_status ?? []).some((entry: GoalStatusEntry) =>
+                UNFINISHED.includes(entry?.status ?? ''),
+              ) ? (
                 <Card>
                   <TextAnswer
                     label={worksheet.tryDifferentlyLabel ?? ''}
@@ -993,12 +1168,12 @@ export function WorksheetFlow({ token }: { token: string }) {
             <div>
               <div className="flex items-center gap-3">
                 <IconBadge name={LOOP_ICON} size={40} />
-                <h1 className="text-[22px] font-semibold leading-tight">Before you start</h1>
+                <h1 className="display text-[26px] uppercase leading-none">Before you start</h1>
               </div>
               <p className="mt-3 text-[15px] leading-relaxed text-[var(--ink-soft)]">
                 {info.has_earlier_submissions
-                  ? 'There is no goal to look back on, because none was written down last time. Writing one down this month gives you something to check against next month.'
-                  : 'This is your first one, so there is nothing to look back on yet. Next time there will be.'}
+                  ? 'Nothing is open on your board, so there is nothing to look back on. What you write in this one lands there, and next month starts by asking how it went.'
+                  : 'This is your first one, so there is nothing to look back on yet. What you decide in this one goes onto your board, and next month starts here by asking how it went.'}
               </p>
             </div>
           )}
@@ -1049,7 +1224,7 @@ export function WorksheetFlow({ token }: { token: string }) {
       ) : null}
 
       {saveProblem ? (
-        <p className="mt-5 text-[14px] font-medium leading-snug text-[#B3261E]">{saveProblem}</p>
+        <p className="mt-5 text-[14px] font-medium leading-snug text-[var(--bad)]">{saveProblem}</p>
       ) : null}
 
       <div className="mt-8 flex items-center gap-3 pb-4">
@@ -1057,7 +1232,7 @@ export function WorksheetFlow({ token }: { token: string }) {
           <button
             type="button"
             onClick={onBack}
-            className="rounded-xl border border-[var(--line)] bg-[var(--card)] px-5 py-3 text-[15px] font-semibold"
+            className="rounded-xl border border-[var(--line)] px-5 py-3 text-[15px] font-semibold"
           >
             Back
           </button>
@@ -1067,8 +1242,8 @@ export function WorksheetFlow({ token }: { token: string }) {
             type="button"
             onClick={onSubmit}
             disabled={busy}
-            className="flex-1 rounded-xl px-5 py-3 text-[15px] font-semibold text-white disabled:opacity-60"
-            style={{ background: accent }}
+            className="flex-1 rounded-xl px-5 py-3 text-[15px] font-bold disabled:opacity-60"
+            style={{ background: accent, color: 'var(--on-accent)' }}
           >
             {busy ? 'Submitting' : 'Submit worksheet'}
           </button>
@@ -1077,14 +1252,98 @@ export function WorksheetFlow({ token }: { token: string }) {
             type="button"
             onClick={onContinue}
             disabled={busy}
-            className="flex-1 rounded-xl px-5 py-3 text-[15px] font-semibold text-white disabled:opacity-60"
-            style={{ background: accent }}
+            className="flex-1 rounded-xl px-5 py-3 text-[15px] font-bold disabled:opacity-60"
+            style={{ background: accent, color: 'var(--on-accent)' }}
           >
             {busy ? 'Saving' : 'Continue'}
           </button>
         )}
       </div>
     </Shell>
+  );
+}
+
+/**
+ * Which of the goals that just landed the family can see, offered at the moment
+ * somebody is actually thinking about them.
+ *
+ * A privacy control on a settings screen somewhere is one nobody finds on the
+ * day it matters. This is the first time these goals have existed, so this is
+ * where the question belongs. It is the same choice as the one on the goal
+ * board and it writes the same field; it is just asked at the right time.
+ */
+function NewGoalVisibility({
+  slug,
+  goals,
+  onChanged,
+}: {
+  slug: string;
+  goals: { id: string; title: string }[];
+  onChanged: () => void;
+}) {
+  const [privateIds, setPrivateIds] = useState<Record<string, true>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [problem, setProblem] = useState('');
+
+  async function toggle(id: string) {
+    const nowPrivate = !privateIds[id];
+    setBusyId(id);
+    setProblem('');
+    try {
+      await editGoal(slug, id, { is_private: nowPrivate });
+      setPrivateIds((current) => {
+        const next = { ...current };
+        if (nowPrivate) next[id] = true;
+        else delete next[id];
+        return next;
+      });
+      onChanged();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'That did not save just now.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+      <p className="text-[14.5px] font-semibold leading-snug">
+        {goals.length === 1 ? 'This goal is on your board' : 'These goals are on your board'}
+      </p>
+      <p className="mt-2 text-[13px] leading-relaxed text-[var(--ink-soft)]">
+        The family can see the goals you set and how they are going, so they can cheer you on. If
+        you would rather keep one to yourself, say so here. You can change it any time.
+      </p>
+      <ul className="mt-3 flex flex-col gap-2">
+        {goals.map((goal) => {
+          const hidden = Boolean(privateIds[goal.id]);
+          return (
+            <li key={goal.id} className="rounded-xl border border-[var(--line)] p-3">
+              <p className="text-[13.5px] leading-snug">{goal.title}</p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="min-w-0 flex-1 text-[12px] text-[var(--ink-soft)]">
+                  {hidden ? 'Only you can see this one.' : 'The family can see this one.'}
+                </span>
+                <button
+                  type="button"
+                  disabled={busyId === goal.id}
+                  onClick={() => toggle(goal.id)}
+                  className="shrink-0 rounded-lg px-2 text-[12px] font-semibold underline disabled:opacity-60"
+                  style={{ color: 'var(--accent-ink)' }}
+                >
+                  {hidden ? 'Let them see it' : 'Make it just mine'}
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {problem ? (
+        <p className="mt-2 text-[13px] font-medium" style={{ color: 'var(--bad)' }}>
+          {problem}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -1098,57 +1357,48 @@ interface Progress {
   fraction: number;
 }
 
+/**
+ * The frame round the check-in: where you are in it, and the way back to the
+ * screen that says what it is.
+ *
+ * It used to be the whole page, with the person's name and colour on it. The
+ * space around it carries all of that now, so what is left here is the progress
+ * bar and the explanation panel. Rendering the name twice was the first thing
+ * that looked wrong once this became a tab.
+ */
 function Shell({
-  info,
-  accent,
   progress,
   topRef,
   screenCount,
+  template,
+  accent,
   overviewOpen,
   onOpenOverview,
   onCloseOverview,
   children,
 }: {
-  info: FormInfo;
-  accent: string;
   progress: Progress | null;
   topRef?: React.RefObject<HTMLDivElement | null>;
   screenCount?: number;
+  template: FormInfo['template_type'];
+  accent: string;
   overviewOpen?: boolean;
   onOpenOverview?: () => void;
   onCloseOverview?: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <main
-      className="mx-auto w-full max-w-md px-5 pb-10 pt-6"
-      // Their own colour, and everything derived from it, for this whole page.
-      style={accentStyle(accent) as React.CSSProperties}
-    >
+    <div>
       <div ref={topRef} />
-      {/*
-        The header is made inert alongside the worksheet while the panel is
-        open, so that tabbing out of the panel's one button cannot land on the
-        "What is this?" button hidden behind it.
-      */}
-      <header className="flex items-center gap-3" inert={overviewOpen ? true : undefined}>
-        <span
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[16px] font-semibold text-white"
-          style={{ background: accent }}
-          aria-hidden="true"
-        >
-          {initialsFor(info.name)}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-semibold">{info.name}</p>
-          <p className="truncate text-[13px] text-[var(--ink-soft)]">
-            This month, {monthName(info.current_cycle_label)}
-          </p>
-        </div>
-        {onOpenOverview ? (
-          // The explanation screen stays reachable for everybody, not only on
-          // somebody's very first go. A first-timer sees it and then never
-          // finds it again is the same as not having written it.
+      {onOpenOverview ? (
+        // The explanation screen stays reachable for everybody, not only on
+        // somebody's very first go. A first-timer sees it and then never finds
+        // it again is the same as not having written it.
+        //
+        // Made inert alongside the check-in while the panel is open, so that
+        // tabbing out of the panel's one button cannot land on the button
+        // hidden behind it.
+        <div className="flex justify-end" inert={overviewOpen ? true : undefined}>
           <button
             type="button"
             onClick={onOpenOverview}
@@ -1158,11 +1408,11 @@ function Shell({
             <Icon name="message" size={18} />
             <span>What is this?</span>
           </button>
-        ) : null}
-      </header>
+        </div>
+      ) : null}
 
       {progress ? (
-        <div className="mt-5">
+        <div className="mt-1">
           {/*
             The section's name is the heading immediately below this, so saying
             it here as well is the same words twice on a small screen. This says
@@ -1180,7 +1430,7 @@ function Shell({
               </p>
             ) : null}
           </div>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--line)]">
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[var(--line)]">
             <div
               className="h-full rounded-full transition-[width] duration-500"
               style={{
@@ -1220,13 +1470,13 @@ function Shell({
 
       {overviewOpen && screenCount ? (
         <OverviewPanel
-          template={info.template_type}
+          template={template}
           screenCount={screenCount}
           accent={accent}
           onClose={onCloseOverview}
         />
       ) : null}
-    </main>
+    </div>
   );
 }
 
@@ -1280,8 +1530,8 @@ function OverviewPanel({
           ref={closeRef}
           type="button"
           onClick={onClose}
-          className="mt-8 w-full rounded-xl px-5 py-3 text-[15px] font-semibold text-white"
-          style={{ background: accent }}
+          className="mt-8 w-full rounded-xl px-5 py-3 text-[15px] font-bold"
+          style={{ background: accent, color: 'var(--on-accent)' }}
         >
           Back to my check-in
         </button>
@@ -1350,7 +1600,7 @@ function SectionView({
           // Repeating a long paragraph on all five screens of section one turns
           // it into something people scroll past, but somebody who has come
           // back a day later still needs it within reach.
-          <details className="mt-3 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-4 py-1">
+          <details className="mt-3 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] px-4 py-1">
             {/*
               py-3 here, not on the box, so the line somebody taps is a full
               44px tall. Measured at 390px wide: as a bare summary it was 21px,
@@ -1583,12 +1833,12 @@ function ReviewView({
       <Card icon={LOOP_ICON}>
         <div className="flex items-start justify-between gap-3">
           <p className="text-[15px] font-semibold leading-snug">
-            {info.previous_goals.length > 0 ? 'Closing the loop' : 'Before you start'}
+            {info.open_goals.length > 0 ? 'Your goals' : 'Before you start'}
           </p>
           <EditLink target={loopStepIndex} />
         </div>
         {(payload.goal_status ?? []).map((entry: GoalStatusEntry, i: number) => (
-          <div key={i} className="mt-3">
+          <div key={entry.goal_id ?? i} className="mt-3">
             <p className="text-[15px] leading-snug">{entry.goal}</p>
             <p className="mt-0.5 text-[14px] text-[var(--ink-soft)]">
               {entry.status || 'No answer'}

@@ -90,9 +90,9 @@ const CHORES_FIELD: ChoiceField = {
 
 const ADULT: Worksheet = {
   intro:
-    'Write the truth here, not what sounds good or what you think you should be. Nobody sees this but you and Tyson, through the private link it came from. You can save and come back, there is no need to finish this in one sitting.',
+    'Write the truth here, not what sounds good or what you think you should be. What you write and the scores you give are yours alone, behind your own code, and nobody else can read them. The goals you set are shared with the house, so we can hold each other to them, and any one of them can be kept back. You can save and come back, there is no need to finish this in one sitting.',
   doneMeans:
-    "Done means it's actually finished the way you meant it when you set it, not started and moved on to something else.",
+    "Hit it means it's actually finished the way you meant it when you set it, not started and moved on to something else. Anything still going is still going, and that is a real answer.",
   initiativeLabel: 'Anything you did this cycle that nobody asked you to do?',
   sections: [
     {
@@ -227,9 +227,9 @@ const ADULT: Worksheet = {
 
 const TEEN: Worksheet = {
   intro:
-    "Be honest here, this isn't about getting in trouble. Only your parents read this, from your own private link.",
+    "Be honest here, this isn't about getting in trouble. The family can see the goals you set and how they are going, so we can cheer each other on. Nobody can see what you wrote or the scores you gave, not your brother, not your sister, not your mum, not your dad. And any goal you mark private is yours alone.",
   doneMeans:
-    "Done means it's actually finished the way you meant it, not started and moved on to something else.",
+    "Hit it means it's actually finished the way you meant it, not started and moved on to something else. Still working on it is a real answer too.",
   initiativeLabel: 'Did you do anything this month that nobody asked you to do?',
   tryDifferentlyLabel:
     "What's one thing you could try differently, without someone telling you what it is?",
@@ -301,9 +301,9 @@ const TEEN: Worksheet = {
 
 const YOUNG_ADULT: Worksheet = {
   intro:
-    "Write this honestly, this isn't about getting caught out. It's the one place this month where you actually look at where things stand, in your own words. Only your parents read this, through your own private link.",
+    "Write this honestly, this isn't about getting caught out. It's the one place this month where you actually look at where things stand, in your own words. The family can see the goals you set and how they are going. Nobody can see what you wrote or the scores you gave, including your parents. And any goal you mark private is yours alone.",
   doneMeans:
-    "Done means it's actually finished the way you meant it, not started and moved on to something else.",
+    "Hit it means it's actually finished the way you meant it, not started and moved on to something else. Still working on it is a real answer too.",
   initiativeLabel: 'Anything you did this month that nobody asked you to do?',
   tryDifferentlyLabel:
     "What's one thing you could try differently, without someone telling you what it is?",

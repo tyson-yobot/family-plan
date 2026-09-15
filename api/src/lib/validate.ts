@@ -1,15 +1,24 @@
 import {
   CHORES_RATINGS,
-  GOAL_STATUSES,
+  LOOP_ANSWERS,
   TEMPLATES,
-  type GoalStatus,
+  UNFINISHED_ANSWERS,
+  type LoopAnswer,
   type TemplateName,
 } from './templates.js';
 
 export interface GoalStatusEntry {
+  /** Which goal on their board this answer is about. */
+  goal_id: string;
   goal: string;
-  status: GoalStatus;
+  status: LoopAnswer;
   reflection?: string;
+}
+
+/** A goal still open on somebody's board, as the check-in needs to see it. */
+export interface OpenGoal {
+  id: string;
+  title: string;
 }
 
 /** Thrown for anything the person can fix, and turned into a 400 with this message. */
@@ -45,14 +54,19 @@ function requireScore(value: unknown, what: string, min: number, max: number): n
  * The three templates are three distinct shapes, so each is checked in full
  * rather than the client being trusted.
  *
- * `previousGoals` is the goal list from this person's most recent submission.
- * When it is non-empty the closing-the-loop answers are required, because the
- * worksheet would not have let them past that step either.
+ * `openGoals` is what is still open on this person's own goal board. When it is
+ * non-empty, every one of them needs an answer, because the check-in would not
+ * have let them past that step either.
+ *
+ * The answers are matched by goal id rather than by position. A board can be
+ * added to from the goal board itself at any moment, including from a second
+ * tab while a check-in is open, so "the third answer is about the third goal"
+ * is not something this can assume.
  */
 export function validatePayload(
   templateName: TemplateName,
   payload: unknown,
-  previousGoals: string[],
+  openGoals: OpenGoal[],
 ): void {
   const template = TEMPLATES[templateName];
   if (!template) {
@@ -64,35 +78,51 @@ export function validatePayload(
   }
   const body = asRecord(payload, 'The worksheet answers');
 
-  // Closing the loop, where there is a previous cycle to close.
-  if (previousGoals.length > 0) {
+  // Closing the loop, where there is anything still open to close.
+  if (openGoals.length > 0) {
     const statuses = body.goal_status;
-    if (!Array.isArray(statuses) || statuses.length !== previousGoals.length) {
+    if (!Array.isArray(statuses)) {
+      fail('Each goal still open on your board needs an answer.');
+    }
+    const answered = new Set<string>();
+    statuses.forEach((entry, i) => {
+      const row = asRecord(entry, `The answer for goal ${i + 1}`);
+      const goalId = requireText(row.goal_id, `The goal being answered at position ${i + 1}`);
+      if (!openGoals.some((goal) => goal.id === goalId)) {
+        fail('One of these answers is about a goal that is not open on your board.');
+      }
+      requireText(row.goal, `The goal text for goal ${i + 1}`);
+      const status = row.status;
+      if (typeof status !== 'string' || !LOOP_ANSWERS.includes(status as LoopAnswer)) {
+        fail(`Goal ${i + 1} needs one of: ${LOOP_ANSWERS.join(', ')}.`);
+      }
+      answered.add(goalId);
+    });
+    const missing = openGoals.filter((goal) => !answered.has(goal.id));
+    if (missing.length > 0) {
       fail(
-        `Last cycle's goals need an answer each: ${previousGoals.length} expected, ` +
-          `${Array.isArray(statuses) ? statuses.length : 0} given.`,
+        `${missing.length} goal${missing.length === 1 ? '' : 's'} on your board still ` +
+          'needs an answer before this can be sent.',
       );
     }
-    statuses.forEach((entry, i) => {
-      const row = asRecord(entry, `The answer for last cycle's goal ${i + 1}`);
-      requireText(row.goal, `The goal text for last cycle's goal ${i + 1}`);
-      const status = row.status;
-      if (typeof status !== 'string' || !GOAL_STATUSES.includes(status as GoalStatus)) {
-        fail(
-          `Last cycle's goal ${i + 1} needs a status of ${GOAL_STATUSES.join(', ')}.`,
-        );
-      }
-    });
 
-    // Teen and young-adult worksheets ask what they would try differently, but
-    // only when the single goal was not finished.
+    /*
+     * Teen and young-adult worksheets ask what they would try differently when
+     * something did not finish.
+     *
+     * Asked across ALL their open goals, not just the first one. The rule used
+     * to read statuses[0] because those worksheets had one goal and could only
+     * ever have one. The goal board removed that: a teen can add goals of their
+     * own, so "the first answer" became an arbitrary one of several, and the
+     * question was asked or skipped on the strength of whichever goal happened
+     * to be at the top of the board.
+     */
     if (!template.requiresThreeGoals) {
-      const status = (statuses[0] as Record<string, unknown>).status;
-      if (status === 'Partly' || status === 'Not yet') {
-        requireText(
-          body.try_differently,
-          'One thing you could try differently',
-        );
+      const unfinished = statuses.some((entry) =>
+        UNFINISHED_ANSWERS.includes((entry as Record<string, unknown>).status as LoopAnswer),
+      );
+      if (unfinished) {
+        requireText(body.try_differently, 'One thing you could try differently');
       }
     }
   }

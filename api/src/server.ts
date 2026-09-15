@@ -1,26 +1,53 @@
 import cors from '@fastify/cors';
-import { desc, eq } from 'drizzle-orm';
 import Fastify from 'fastify';
-import { db } from './db/client.js';
-import { drafts, people, submissions, type Person } from './db/schema.js';
 import { buildInfo } from './lib/build-info.js';
-import { currentCycleLabel } from './lib/cycle.js';
-import { carryForward, EMPTY_CARRIED_FORWARD } from './lib/previous.js';
-import type { TemplateName } from './lib/templates.js';
-import { ValidationError, validatePayload } from './lib/validate.js';
-import { registerDashboardRoutes } from './routes/dashboard.js';
+import { registerBoardRoutes } from './routes/board.js';
+import { registerFamilyRoutes } from './routes/family.js';
+import { registerSpaceRoutes } from './routes/space.js';
 
 /**
- * Keeps access tokens out of THIS service's log lines. Fastify logs every
- * request path by default, which on Railway would put every permanent private
- * link into the log stream.
+ * Keeps secrets out of THIS service's log lines.
+ *
+ * Fastify logs every request path by default, which on Railway would put every
+ * permanent link into the log stream. Two kinds of secret travel through here
+ * now rather than one:
+ *
+ *   - Link tokens, in the path, redacted below.
+ *   - Codes and session tokens, which never appear in a path at all. A code is
+ *     always a JSON body on a POST and a session token is always an
+ *     Authorization header, and this logger is configured to serialise neither.
+ *     That is the reason the request serialiser below returns exactly two
+ *     fields rather than letting Fastify's default one through: the default
+ *     carries headers, and the Authorization header is a live session.
  *
  * It is worth being exact about what this does not cover: the page the family
- * opens is served by Vercel, and its access log records /f/<token> in full.
+ * opens is served by Vercel, and its access log records the path in full.
  * Nothing in this repository can redact that. This guard is about Railway.
  */
 function redactPath(url: string): string {
-  return url.replace(/\/api\/(form|dashboard)\/[^/?]+/, '/api/$1/[token]');
+  /*
+   * Redacts by SHAPE, not by route.
+   *
+   * The first version of this named the routes it knew about, and the first
+   * thing that got through it was a route this release had deleted: an old
+   * bookmark asking for /api/form/<token> put a live token straight into the
+   * Railway log stream, because that address is not in the list any more and
+   * nobody thinks to redact a route that no longer exists. Found by making the
+   * request and reading the log line back, not by reading this file.
+   *
+   * So anything that looks like one of our tokens is hidden wherever it turns
+   * up. A slug is short and survives, which is what makes a log line still
+   * worth reading. A goal id is long and gets hidden too; it is not a secret,
+   * but nothing here needs it and the rule is worth more than the id.
+   */
+  const [path, query] = url.split('?');
+  const redacted = path
+    .split('/')
+    .map((segment) => (/^[A-Za-z0-9_-]{20,}$/.test(segment) ? '[redacted]' : segment))
+    .join('/');
+  // A query string could carry anything and nothing here reads one, so it is
+  // never logged at all rather than being picked over.
+  return query === undefined ? redacted : `${redacted}?[redacted]`;
 }
 
 const app = Fastify({
@@ -50,186 +77,42 @@ if (allowedOrigins.includes('*')) {
 
 await app.register(cors, {
   origin: allowedOrigins,
-  methods: ['GET', 'PUT', 'POST'],
+  methods: ['GET', 'PUT', 'POST', 'PATCH'],
+  allowedHeaders: ['content-type', 'authorization'],
 });
 
-async function findPerson(token: string): Promise<Person | null> {
-  if (typeof token !== 'string' || token.length < 20) return null;
-  const rows = await db.select().from(people).where(eq(people.accessToken, token)).limit(1);
-  return rows[0] ?? null;
-}
-
-/** The person's most recent submission, which is what feeds the next cycle. */
-async function latestSubmission(personId: string) {
-  const rows = await db
-    .select()
-    .from(submissions)
-    .where(eq(submissions.personId, personId))
-    .orderBy(desc(submissions.submittedAt))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-interface TokenParams {
-  token: string;
-}
+/**
+ * A not-found reply that does not repeat the address back.
+ *
+ * Fastify's own 404 handler writes "Route GET:/api/form/<token> not found"
+ * into both the reply and the log, and neither goes through the serialiser
+ * above, so the redaction there does not reach it. That was found by making the
+ * request and then reading the log line, not by reading this file: the guard
+ * looked complete and was not.
+ *
+ * It matters because the addresses that reach it are exactly the ones carrying
+ * a token. Every old link in the house points at a route this release removed,
+ * so the first thing a phone with a stale bookmark does is put a live token
+ * into Railway's log stream.
+ */
+app.setNotFoundHandler(async (_request, reply) => {
+  return reply.code(404).send({ error: 'There is nothing at that address.' });
+});
 
 app.get('/api/version', async () => buildInfo);
 
-// The parent view, Phase 2. Read only.
-registerDashboardRoutes(app);
+// The family board, behind the one link the whole house shares. Names, a
+// status and a date. It reads nobody's answers.
+registerBoardRoutes(app);
 
-app.get<{ Params: TokenParams }>('/api/form/:token', async (request, reply) => {
-  const person = await findPerson(request.params.token);
-  if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
+// Everybody's own space, behind their own code. Every route in here proves the
+// caller is the person it is about before it answers.
+registerSpaceRoutes(app);
 
-  const previous = await latestSubmission(person.id);
-  const carried = previous
-    ? carryForward(person.templateType as TemplateName, previous.payload)
-    : EMPTY_CARRIED_FORWARD;
-
-  const cycle = currentCycleLabel();
-  // Whether this month is already finished. Without this the worksheet reopens
-  // blank after a submit, with nothing to say it has already been done, and a
-  // second row lands for the same month.
-  const alreadyDone =
-    previous && previous.cycleLabel === cycle
-      ? { id: previous.id, submitted_at: previous.submittedAt.toISOString() }
-      : null;
-
-  return {
-    name: person.name,
-    // The worksheet is coloured per person, so the page needs to know who this is.
-    slug: person.slug,
-    template_type: person.templateType,
-    current_cycle_label: cycle,
-    submitted_this_cycle: alreadyDone,
-    // Whether they have ever finished one, which is a different question from
-    // whether they set a goal last time.
-    has_earlier_submissions: Boolean(previous),
-    previous_goals: carried.previousGoals,
-    my_area: carried.myArea,
-    last_cycle_status: carried.lastCycleStatus,
-    last_initiative_note: carried.lastInitiativeNote,
-    // Their own note to themselves from last time, shown back before anything else.
-    note_to_self: carried.noteToSelf,
-  };
-});
-
-app.get<{ Params: TokenParams }>('/api/form/:token/draft', async (request, reply) => {
-  const person = await findPerson(request.params.token);
-  if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
-
-  const rows = await db.select().from(drafts).where(eq(drafts.personId, person.id)).limit(1);
-  const draft = rows[0];
-  if (!draft) return null;
-
-  // Returns what is stored, nothing more. Whether it is stale for the current
-  // month is decided against current_cycle_label from the form endpoint.
-  return {
-    cycle_label: draft.cycleLabel,
-    payload: draft.payload,
-    started_at: draft.startedAt.toISOString(),
-  };
-});
-
-interface DraftBody {
-  cycle_label?: unknown;
-  payload?: unknown;
-  started_at?: unknown;
-}
-
-app.put<{ Params: TokenParams; Body: DraftBody }>(
-  '/api/form/:token/draft',
-  async (request, reply) => {
-    const person = await findPerson(request.params.token);
-    if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
-
-    const { payload, started_at: startedAt } = request.body ?? {};
-    if (typeof payload !== 'object' || payload === null) {
-      return reply.code(400).send({ error: 'payload is required.' });
-    }
-    // The month is worked out here and the body's copy is ignored. A tab left
-    // open across midnight on the last day of a month would otherwise keep
-    // stamping the old month onto everything it saved, and a hand-written
-    // request could stamp any month it liked, which is exactly how a stale
-    // draft gets silently resumed or a live one made to look stale.
-    const cycleLabel = currentCycleLabel();
-    const started = typeof startedAt === 'string' ? new Date(startedAt) : new Date(NaN);
-    if (Number.isNaN(started.getTime())) {
-      return reply.code(400).send({ error: 'started_at must be a timestamp.' });
-    }
-
-    await db
-      .insert(drafts)
-      .values({
-        personId: person.id,
-        cycleLabel,
-        payload,
-        startedAt: started,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: drafts.personId,
-        set: { cycleLabel, payload, startedAt: started, updatedAt: new Date() },
-      });
-
-    return { ok: true };
-  },
-);
-
-app.post<{ Params: TokenParams; Body: DraftBody }>(
-  '/api/form/:token/submit',
-  async (request, reply) => {
-    const person = await findPerson(request.params.token);
-    if (!person) return reply.code(404).send({ error: 'This link is not valid.' });
-
-    const { payload, started_at: startedAt } = request.body ?? {};
-    const started = typeof startedAt === 'string' ? new Date(startedAt) : new Date(NaN);
-    if (Number.isNaN(started.getTime())) {
-      return reply.code(400).send({ error: 'started_at must be a timestamp.' });
-    }
-    // Worked out here, not taken from the body. Same reasoning as the draft.
-    const cycleLabel = currentCycleLabel();
-
-    const templateName = person.templateType as TemplateName;
-    const previous = await latestSubmission(person.id);
-    const carried = previous
-      ? carryForward(templateName, previous.payload)
-      : EMPTY_CARRIED_FORWARD;
-
-    try {
-      validatePayload(templateName, payload, carried.previousGoals);
-    } catch (error) {
-      if (error instanceof ValidationError) {
-        return reply.code(400).send({ error: error.message });
-      }
-      throw error;
-    }
-
-    // One transaction: either the answers are recorded and the draft is gone,
-    // or neither happened. Two separate statements could record the submission
-    // and leave the draft behind, so the person resumes a worksheet they have
-    // already handed in and submits it twice.
-    const submittedAt = await db.transaction(async (tx) => {
-      const inserted = await tx
-        .insert(submissions)
-        .values({
-          personId: person.id,
-          templateType: person.templateType,
-          cycleLabel,
-          payload: payload as object,
-          startedAt: started,
-        })
-        .returning({ submittedAt: submissions.submittedAt });
-
-      await tx.delete(drafts).where(eq(drafts.personId, person.id));
-      return inserted[0].submittedAt;
-    });
-
-    return { ok: true, submitted_at: submittedAt.toISOString() };
-  },
-);
+// What the five of them can see of each other: goals, and nothing else. Behind
+// a code, because "shared with all five" is not "readable by whoever holds the
+// link". See routes/family.ts for the line between shared and private.
+registerFamilyRoutes(app);
 
 const port = Number(process.env.PORT ?? 8080);
 await app.listen({ port, host: '0.0.0.0' });

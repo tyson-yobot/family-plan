@@ -71,8 +71,10 @@ export function WhatThisIs({
           <Icon name="heart" size={20} />
         </span>
         <p className="text-[14px] leading-relaxed">
-          Nothing here is graded and there are no right answers. An honest low score is worth
-          more than a tidy high one, and you can leave anything optional blank.
+          Nothing here is graded and there are no right answers. An honest low score is worth more
+          than a tidy high one, and you can leave anything optional blank. The family can see the
+          goals you set and how they are going; nobody can see what you wrote or the scores you
+          gave, and any goal you mark private is yours alone.
         </p>
       </div>
     </div>
