@@ -37,6 +37,15 @@ Phase 2: a read-only parent view at `/d/<token>`, one link each for Tyson and
 Danyell. Who is done this month, everybody's history, and every answer laid out
 in the order it was written. It cannot change or delete anything.
 
+Phase 3, the design and pacing pass. No question, no wording, no order and no
+validation rule changed: `web/lib/worksheets.ts` and the whole of `api/` are
+byte for byte what they were. What changed is the delivery. A check-in opens on
+one screen saying what it is, shown to somebody who has never written anything
+here before and reachable from the header afterwards. Each section is asked over
+two or three small screens rather than one long one, so the bar moves on every
+screen. Everybody's own colour runs through their whole check-in, every question
+has an icon, and finishing a section or the whole thing is marked.
+
 ## What is deliberately not built
 
 No email, no reminders, no chore integration, no scheduling engine. Quarterly
@@ -53,6 +62,22 @@ others.
   in `web/lib/worksheets.ts`. Run `npm run check:worksheet-ids` from the repo
   root. Nothing enforces it in either deploy.
 - Verify a deploy with `/api/version`, never a health check.
+- `npm run check:chunks` proves the pacing did not lose a question: every field
+  is still asked, once, in the order it was written, and no screen has gone back
+  to holding more than four. `npm run check:contrast` measures every colour pair
+  the app renders against WCAG 2.1. Both were watched failing on purpose and
+  then passing. Like the worksheet-id check, both are run by hand: nothing in
+  either deploy runs them.
+- The preview walk does not need a Railway variable changed. The origin
+  `family-plan-git-dev-tyson-yobots-projects.vercel.app` is already in
+  `WEB_ORIGIN`, so `npx vercel deploy` then `npx vercel alias set <deployment>
+  family-plan-git-dev-tyson-yobots-projects.vercel.app` gives a working preview
+  at an allowed origin, with production on `family-plan-iota` untouched. That
+  alias is protected, so open it through a share link rather than directly.
+- The Vercel project's root directory is `web`, so `vercel deploy` is run from
+  the repo root, not from `web/`. Run from `web/` it looks for `web/web` and
+  fails. Linking at the root appends duplicate lines to `.gitignore`; check
+  `git status` afterwards.
 - The database is reachable from a laptop through a Railway TCP proxy on the
   Postgres service. Without it, `drizzle-kit push` cannot reach it from here.
 - Vercel Authentication was on by default on this project and would have locked

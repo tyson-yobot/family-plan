@@ -98,6 +98,27 @@ drift you get a worksheet that can be filled in and then refuses to submit.
 from the repo root compares them. It is run by hand. Nothing enforces it in
 either deploy, and that is a real gap rather than a covered one.
 
+## Two more checks, run the same way
+
+    npm run check:chunks
+    npm run check:contrast
+
+`check:chunks` runs the real code that splits a section into small screens
+against the real worksheets, and fails if a question is asked twice, asked out
+of order, dropped, or if a screen has gone back to holding more than four. A
+dropped question would not error anywhere: the worksheet would simply never ask
+it, and the server would then refuse the submission over a field nobody was
+shown.
+
+`check:contrast` reads the colours out of `web/lib/theme.ts` and
+`web/app/globals.css` and measures every pair the app actually renders against
+WCAG 2.1. Every accent is used three ways, as a button background under white
+text, as text on the page and on a card, and as a tint behind an icon, and a
+colour can be comfortable in one and fail in another.
+
+Both are run by hand, like the one above, and nothing in either deploy runs
+them.
+
 ## The parent view
 
 Phase 2. `https://<site>/d/<token>`, one link each for Tyson and Danyell,
