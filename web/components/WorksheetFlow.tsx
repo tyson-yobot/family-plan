@@ -1126,7 +1126,12 @@ function Shell({
       style={accentStyle(accent) as React.CSSProperties}
     >
       <div ref={topRef} />
-      <header className="flex items-center gap-3">
+      {/*
+        The header is made inert alongside the worksheet while the panel is
+        open, so that tabbing out of the panel's one button cannot land on the
+        "What is this?" button hidden behind it.
+      */}
+      <header className="flex items-center gap-3" inert={overviewOpen ? true : undefined}>
         <span
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[16px] font-semibold text-white"
           style={{ background: accent }}
