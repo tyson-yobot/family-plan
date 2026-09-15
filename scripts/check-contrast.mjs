@@ -54,6 +54,21 @@ function readPalette() {
   };
 }
 
+/**
+ * The accent the shared pages fall back to, straight out of globals.css. The
+ * landing page has no person and so no colour of their own, and this is what it
+ * draws its icon in.
+ */
+function readDefaultAccent() {
+  const css = readFileSync(join(root, 'web/app/globals.css'), 'utf8');
+  const grab = (name) => {
+    const found = css.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,6})`));
+    if (!found) throw new Error(`--${name} is not in globals.css any more.`);
+    return found[1];
+  };
+  return { accent: grab('accent'), tint: grab('accent-tint') };
+}
+
 function channels(hex) {
   let clean = hex.replace('#', '');
   if (clean.length === 3) clean = [...clean].map((c) => c + c).join('');
@@ -113,6 +128,13 @@ add('body text on a card', palette.ink, palette.card, 4.5);
 add('quieter text on the page', palette.inkSoft, palette.page, 4.5);
 add('quieter text on a card', palette.inkSoft, palette.card, 4.5);
 add('the error red on a card', '#B3261E', palette.card, 4.5);
+
+// The shared pages, the landing page and the moment before a person's own
+// colour is applied, run on the defaults in globals.css rather than an accent.
+const defaults = readDefaultAccent();
+add('the shared-page icon on the page', defaults.accent, palette.page, 3);
+add('the shared-page icon inside its circle', defaults.accent, defaults.tint, 3);
+add('body text on the shared-page circle', palette.ink, defaults.tint, 4.5);
 
 for (const [name, accent] of accents) {
   const soft = tint(accent, tintStrength);
