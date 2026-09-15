@@ -50,14 +50,74 @@ function redactPath(url: string): string {
   return query === undefined ? redacted : `${redacted}?[redacted]`;
 }
 
+/**
+ * Strips anything SHAPED like a credential out of free text.
+ *
+ * `redactPath` above only sees request paths, and the secret this was written
+ * for never appears in one. A SimpleFIN access URL is of the form
+ * https://<user>:<password>@bridge.../..., it lives in an environment
+ * variable, and the way it escapes is an ERROR MESSAGE: fetch failures, DNS
+ * failures and HTTP client errors all quote the URL they were given, and that
+ * string then goes into a log line or, worse, into a reply.
+ *
+ * So this runs over error text on its way out. Shape-based for the same reason
+ * `redactPath` is: a list of the variables it knows about would miss the next
+ * one somebody adds, and the failure of a list is a leak nobody notices.
+ *
+ *   - Any URL carrying credentials before the @ loses them entirely.
+ *   - Any remaining run of 20+ token characters is hidden.
+ *
+ * The second rule is blunt on purpose. It occasionally hides something dull,
+ * which costs a slightly less readable log line, and that is the cheaper
+ * mistake by a wide margin.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    // https://user:password@host -> https://[redacted]@host
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
+    // any long opaque run that could be a token or a key
+    .replace(/[A-Za-z0-9_-]{20,}/g, '[redacted]');
+}
+
 const app = Fastify({
   logger: {
     serializers: {
       req(request) {
         return { method: request.method, url: redactPath(request.url) };
       },
+      /*
+       * Error messages go through the scrubber before they are logged.
+       * Fastify's default error serialiser prints the message and the stack as
+       * they are, and a message quoting an access URL is exactly how the
+       * SimpleFIN secret would reach the log stream.
+       */
+      err(error: Error & { statusCode?: number }) {
+        return {
+          type: error.name,
+          message: redactSecrets(error.message ?? ''),
+          statusCode: error.statusCode,
+          stack: redactSecrets(error.stack ?? ''),
+        };
+      },
     },
   },
+});
+
+/**
+ * One reply for every unhandled error, and it never quotes the error.
+ *
+ * Fastify's default sends `error.message` to the caller on a 500. That is a
+ * client payload, so an upstream client error quoting an access URL would put
+ * the SimpleFIN secret on somebody's phone. The log keeps the scrubbed detail;
+ * the reply says nothing at all about what went wrong internally.
+ */
+app.setErrorHandler(async (error: Error & { statusCode?: number }, request, reply) => {
+  request.log.error({ err: error }, 'request failed');
+  const status = error.statusCode ?? 500;
+  if (status >= 400 && status < 500) {
+    return reply.code(status).send({ error: redactSecrets(error.message ?? 'That did not work.') });
+  }
+  return reply.code(500).send({ error: 'Something went wrong at our end. Try again in a moment.' });
 });
 
 const allowedOrigins = (process.env.WEB_ORIGIN ?? '')

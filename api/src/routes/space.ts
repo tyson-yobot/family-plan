@@ -1,7 +1,15 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db/client.js';
-import { drafts, goals, goalSteps, people, submissions, type Person } from '../db/schema.js';
+import {
+  coachNotes,
+  drafts,
+  goals,
+  goalSteps,
+  people,
+  submissions,
+  type Person,
+} from '../db/schema.js';
 import { endAllSessions, endSession, requireOwner, signIn } from '../lib/auth.js';
 import { hashCode, refuseCode } from '../lib/codes.js';
 import { currentCycleLabel, daysLeftInMonth } from '../lib/cycle.js';
@@ -17,6 +25,7 @@ import {
   type Horizon,
 } from '../lib/goals.js';
 import { toggleHabitDay, weekFor } from '../lib/week.js';
+import { coachConfigured, writeNoteFor } from '../lib/coach.js';
 import { goalAreasFor } from '../lib/templates.js';
 import { carryForward, EMPTY_CARRIED_FORWARD } from '../lib/previous.js';
 import type { TemplateName } from '../lib/templates.js';
@@ -293,6 +302,143 @@ export function registerSpaceRoutes(app: FastifyInstance) {
     if (!person) return;
     return { habits: await weekFor(person.id) };
   });
+
+  /**
+   * The private note written back to this person.
+   *
+   * Under `owner()` like everything else here, which is what makes it
+   * unreachable by the other four. There is no family-facing equivalent of this
+   * route and there must never be one: the note is derived from somebody's
+   * scores and reflections, so handing it to anybody else hands over the thing
+   * those were promised to keep.
+   */
+  app.get<{ Params: SlugParams }>('/api/space/:slug/coach', async (request, reply) => {
+    const person = await owner(request, reply, request.params.slug);
+    if (!person) return;
+
+    const rows = await db
+      .select()
+      .from(coachNotes)
+      .where(eq(coachNotes.personId, person.id))
+      .orderBy(desc(coachNotes.createdAt))
+      .limit(1);
+    const note = rows[0];
+    if (!note) {
+      // Nothing yet is a normal answer, not an error. It means either the
+      // coach is still writing, or it is not configured, or it had nothing to
+      // say. The screen tells the person which without dressing it up.
+      return { note: null, configured: coachConfigured() };
+    }
+    return {
+      configured: coachConfigured(),
+      note: {
+        id: note.id,
+        body: note.body,
+        cycle_label: note.cycleLabel,
+        created_at: note.createdAt.toISOString(),
+        // Only offered while it is still outstanding.
+        suggested_step:
+          note.acceptedAt || note.dismissedAt ? null : note.suggestedStep,
+        suggested_goal_id:
+          note.acceptedAt || note.dismissedAt ? null : note.suggestedGoalId,
+        accepted: Boolean(note.acceptedAt),
+      },
+    };
+  });
+
+  /**
+   * Takes the one step it offered onto their board.
+   *
+   * This is the ONLY way anything the coach wrote reaches a board, and it takes
+   * a tap from the owner. Nothing here writes a goal or a step on its own.
+   */
+  app.post<{ Params: SlugParams & { noteId: string } }>(
+    '/api/space/:slug/coach/:noteId/accept',
+    async (request, reply) => {
+      const person = await owner(request, reply, request.params.slug);
+      if (!person) return;
+
+      const rows = await db
+        .select()
+        .from(coachNotes)
+        .where(and(eq(coachNotes.id, request.params.noteId), eq(coachNotes.personId, person.id)))
+        .limit(1);
+      const note = rows[0];
+      if (!note) return reply.code(404).send({ error: 'That note could not be found.' });
+      if (!note.suggestedStep) {
+        return reply.code(400).send({ error: 'There is no step on that note.' });
+      }
+      if (note.acceptedAt || note.dismissedAt) {
+        return reply.code(409).send({ error: 'That one has already been dealt with.' });
+      }
+
+      /*
+       * The goal is re-checked against this person here, not trusted from the
+       * note. The id was validated when the note was written, but a goal can be
+       * deleted or closed in between, and a step landing on a stale id is a step
+       * nobody ever sees.
+       */
+      let goalId: string | null = null;
+      if (note.suggestedGoalId) {
+        const target = await db
+          .select({ id: goals.id })
+          .from(goals)
+          .where(
+            and(
+              eq(goals.id, note.suggestedGoalId),
+              eq(goals.personId, person.id),
+              eq(goals.status, 'open'),
+            ),
+          )
+          .limit(1);
+        goalId = target[0]?.id ?? null;
+      }
+
+      if (goalId) {
+        const existing = await db
+          .select({ sortOrder: goalSteps.sortOrder })
+          .from(goalSteps)
+          .where(eq(goalSteps.goalId, goalId));
+        const sortOrder =
+          existing.reduce((highest, row) => Math.max(highest, row.sortOrder), 0) + 1;
+        await db
+          .insert(goalSteps)
+          .values({ goalId, personId: person.id, title: note.suggestedStep, sortOrder });
+      } else {
+        // No goal to hang it under, so it becomes a small goal of its own with
+        // the step as its first action. Better than dropping it on the floor.
+        await addGoal(person.id, {
+          title: note.suggestedStep,
+          owner: person.name,
+          source: 'coach',
+        });
+      }
+
+      await db
+        .update(coachNotes)
+        .set({ acceptedAt: new Date() })
+        .where(eq(coachNotes.id, note.id));
+
+      const board = await boardFor(person.id);
+      return { ok: true, goals: board.map(goalShape) };
+    },
+  );
+
+  /** Waves the step away. It is not offered again. */
+  app.post<{ Params: SlugParams & { noteId: string } }>(
+    '/api/space/:slug/coach/:noteId/dismiss',
+    async (request, reply) => {
+      const person = await owner(request, reply, request.params.slug);
+      if (!person) return;
+      const updated = await db
+        .update(coachNotes)
+        .set({ dismissedAt: new Date() })
+        .where(and(eq(coachNotes.id, request.params.noteId), eq(coachNotes.personId, person.id)))
+        .returning({ id: coachNotes.id });
+      if (!updated[0]) return reply.code(404).send({ error: 'That note could not be found.' });
+      return { ok: true };
+    },
+  );
 
   interface HabitBody {
     date?: unknown;
@@ -877,11 +1023,29 @@ export function registerSpaceRoutes(app: FastifyInstance) {
         return { submittedAt: inserted[0].submittedAt, created: madeGoals };
       });
 
+      /*
+       * The coach is started here and DELIBERATELY NOT AWAITED.
+       *
+       * The check-in is committed by this point. Awaiting the model would put a
+       * network call to a third party on the critical path of somebody pressing
+       * done, so a slow or down model would turn a saved check-in into a
+       * spinner and then an error, on the one screen that must never fail.
+       * `writeNoteFor` catches everything internally and returns void, so a
+       * rejection cannot escape here either; the `catch` is belt and braces
+       * against an unhandled rejection taking the process down.
+       *
+       * The screen asks for the note separately, and copes with it not being
+       * there yet or never arriving.
+       */
+      void writeNoteFor(person.id).catch(() => {});
+
       return {
         ok: true,
         submitted_at: submittedAt.submittedAt.toISOString(),
         /** What just went onto the board, so the finish screen can say so. */
         created_goals: submittedAt.created,
+        /** Whether it is even worth the screen asking. */
+        coach_expected: coachConfigured(),
       };
     },
   );

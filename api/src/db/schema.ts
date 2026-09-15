@@ -292,6 +292,57 @@ export const habitLogs = pgTable(
 );
 
 /**
+ * The private note written back to one person after they check in.
+ *
+ * THIS IS THE MOST PRIVATE TABLE IN THIS DATABASE, and it is worth saying why
+ * rather than assuming the next person will work it out.
+ *
+ * A row here is written from one person's own answers: their scores, the
+ * sentences behind them, their note to self. It reads nobody else's data, not
+ * even the shared goals, and it never compares anybody to anybody. So a row
+ * here is a derivative of the most private thing in the app, and it leaks the
+ * original if it is ever shown to somebody else. There is exactly one route
+ * that reads this table, it is under `owner()`, and nothing in routes/family.ts
+ * touches it at all.
+ *
+ * The text is stored rather than regenerated on every open, for three reasons:
+ * somebody rereading their note should see the same words rather than a new
+ * take on an old month, it costs nothing to read, and a model that is down
+ * cannot take away a note somebody already has.
+ */
+export const coachNotes = pgTable(
+  'coach_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id),
+    cycleLabel: text('cycle_label').notNull(),
+    /** The submission it was written about, where there was one. */
+    submissionId: uuid('submission_id'),
+    body: text('body').notNull(),
+    /**
+     * The one small next step it offered, and the goal it belongs under.
+     *
+     * Kept separate from the body so that accepting it is a button rather than
+     * somebody retyping a sentence out of a paragraph. Null where the note did
+     * not suggest anything, which is a legitimate outcome: a month where
+     * somebody is already doing the work does not need a new task.
+     */
+    suggestedStep: text('suggested_step'),
+    suggestedGoalId: uuid('suggested_goal_id'),
+    /** Set when they tapped it onto their board, so it is not offered twice. */
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    /** Set when they waved it away. Also stops it being offered again. */
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+    /** Which model wrote it, so a change in voice can be traced to a change here. */
+    model: text('model').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('coach_notes_person_idx').on(table.personId, table.createdAt)],
+);
+
+/**
  * The one link the whole house shares. It opens the family board and nothing
  * else: names, whether each person has finished this month, and the date they
  * did it. It reads nobody's answers, so holding it is not a way in to anybody.
@@ -326,3 +377,4 @@ export type Cheer = typeof cheers.$inferSelect;
 export type GoalStep = typeof goalSteps.$inferSelect;
 export type Draft = typeof drafts.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
+export type CoachNote = typeof coachNotes.$inferSelect;
