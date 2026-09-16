@@ -45,6 +45,8 @@ export function CoachNote({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
+  /** Set once the polling has stopped looking, so the message can stop promising. */
+  const [gaveUp, setGaveUp] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -76,24 +78,55 @@ export function CoachNote({
    * is not coming, and an open-ended poll would sit there forever on a phone.
    */
   useEffect(() => {
-    if (!expectSoon || note || !configured) return;
+    if (!expectSoon || note || !configured || gaveUp) return;
     let tries = 0;
     const timer = setInterval(() => {
       tries += 1;
       void load().then((found) => {
-        if (found || tries >= 4) clearInterval(timer);
+        if (found) {
+          clearInterval(timer);
+        } else if (tries >= 4) {
+          clearInterval(timer);
+          // Stopping looking has to change what the screen says, or the line
+          // below goes on promising something that is not coming. See gaveUp.
+          setGaveUp(true);
+        }
       });
     }, 7000);
     return () => clearInterval(timer);
-  }, [expectSoon, note, configured, load]);
+  }, [expectSoon, note, configured, gaveUp, load]);
 
   if (!loaded) return null;
 
   if (!note) {
-    // Nothing to show, said honestly. Never dressed up as an error, and never
-    // pretending something is coming when it is not.
+    // Nothing to show, said honestly. Never dressed up as an error.
     if (!configured) return null;
     if (!expectSoon) return null;
+
+    /*
+     * Once the polling has given up, the message CHANGES.
+     *
+     * It used to say "it will be here in a moment" for ever, because nothing
+     * distinguished "still writing" from "stopped looking". That is a promise
+     * the screen cannot keep, on the one screen that exists to be honest with
+     * somebody who has just been honest with it, and the comment two lines up
+     * claimed the opposite of what the code did.
+     *
+     * There is no retry button because there is no endpoint to retry against;
+     * saying plainly that there is nothing this month beats a control that
+     * would not work. Written so it cannot read as the person's fault.
+     */
+    if (gaveUp) {
+      return (
+        <div className="mt-6 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+          <p className="text-[14px] leading-relaxed text-[var(--ink-soft)]">
+            No note this month. That happens sometimes and it is nothing to do with what you
+            wrote. Everything you put in is saved.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="mt-6 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
         <p className="text-[14px] leading-relaxed text-[var(--ink-soft)]">
