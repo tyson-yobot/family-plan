@@ -24,7 +24,26 @@
  * mistake by a wide margin.
  */
 export function redactSecrets(text: string): string {
-  return text
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@')
-    .replace(/\b[A-Za-z0-9_-]{20,}\b/g, '[redacted]');
+  return (
+    text
+      /*
+       * Everything between the scheme and the @ goes, whatever is in it.
+       *
+       * This used to be `[^\s/@]+:[^\s/@]+@`, which excluded the slash so that
+       * it could not run past a path. That was backwards: a base64 or
+       * percent-encoded password frequently CONTAINS a slash or a plus, and
+       * such a password simply did not match, so the one credential this
+       * function exists for was the one shape it could miss. If the remaining
+       * segments were each under twenty characters the second rule did not
+       * catch them either.
+       *
+       * It now takes everything from the scheme up to the FIRST @ in that URL,
+       * whatever characters are in between, stopping at whitespace so it can
+       * never run from one token into another. The cost is that a URL with an @
+       * somewhere in its path loses a little more than it strictly needed to,
+       * which is a far cheaper mistake than printing a password.
+       */
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s]*?@/gi, '$1[redacted]@')
+      .replace(/\b[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
+  );
 }

@@ -218,8 +218,17 @@ export async function applyCheckIn(
   }
 
   // The "Where I am going" answers become real horizon goals, in the same
-  // transaction as everything else here, so a check-in still lands whole.
-  await applyVision(tx, personId, templateName, payload, submissionId, personName);
+  // transaction as everything else here, so a check-in still lands whole. They
+  // are created PRIVATE; see applyVision for why that differs from every other
+  // goal on the board.
+  const visionGoals = await applyVision(
+    tx,
+    personId,
+    templateName,
+    payload,
+    submissionId,
+    personName,
+  );
 
   // Put this month's new goals on the board.
   const fresh: NewGoal[] = [];
@@ -296,11 +305,18 @@ export async function applyCheckIn(
     created.push({ id: inserted[0].id, title: item.title });
   }
 
-  // Handed back so the screen at the end of a check-in can say which goals just
-  // went up where the family can see them, and offer to keep any of them back.
-  // That is the moment somebody is thinking about it; a privacy control they
-  // have to go looking for afterwards is one they will not find.
-  return created;
+  /*
+   * Handed back so the screen at the end of a check-in can say which goals just
+   * went up where the family can see them, and offer to keep any of them back.
+   * That is the moment somebody is thinking about it; a privacy control they
+   * have to go looking for afterwards is one they will not find.
+   *
+   * The vision goals are included even though they are already private, because
+   * the same screen is where somebody would choose to SHARE one. Leaving them
+   * out would mean three goals appeared on the board that the finish screen
+   * never mentioned.
+   */
+  return [...created, ...visionGoals];
 }
 
 /**
@@ -352,6 +368,26 @@ export function visionTitle(answer: string): string {
  * reading of somebody changing what they wrote: the vision moved, it is not a
  * second vision. A vision goal somebody has deliberately closed is left closed,
  * and a new one is written, because closing it was a decision.
+ *
+ * THESE ARE CREATED PRIVATE, AND THAT IS THE ONE DECISION HERE WORTH ARGUING
+ * WITH.
+ *
+ * Mission 2 says horizon goals follow the same privacy rules as any goal, which
+ * means shared by default. Every other goal on the board is a title somebody
+ * typed into a box labelled "a goal". These are not: they are the first
+ * sentence of a paragraph somebody wrote in a section of the check-in, under an
+ * intro that promises in as many words that "what you write and the scores you
+ * give are yours alone". A ten-year answer is where somebody says the true
+ * frightening thing, and the first sentence of it is exactly the part that
+ * would hurt to publish.
+ *
+ * Publishing it by default would also do it silently. The finish screen can
+ * only offer to hold back the goals it is handed, so an answer turned into a
+ * shared goal here would reach the family board without ever being named.
+ *
+ * So they start private and their owner can share any of them with the tap that
+ * already exists on every goal card. That is the mission's tie-breaker applied
+ * as written: the more private option wins, and the reversible one wins.
  */
 async function applyVision(
   tx: typeof db,
@@ -360,11 +396,12 @@ async function applyVision(
   payload: Record<string, unknown>,
   submissionId: string,
   personName: string,
-): Promise<void> {
+): Promise<{ id: string; title: string }[]> {
   // Only the adult worksheet asks these. The teen and young-adult sheets have
   // no horizon questions, and inventing answers for them is not this function's
   // business.
-  if (templateName !== 'adult') return;
+  const made: { id: string; title: string }[] = [];
+  if (templateName !== 'adult') return made;
 
   const now = new Date();
   for (const { field, horizon } of VISION_FIELDS) {
@@ -403,18 +440,25 @@ async function applyVision(
       .where(eq(goals.personId, personId));
     const sortOrder = rows.reduce((highest, row) => Math.max(highest, row.sortOrder), 0) + 1;
 
-    await tx.insert(goals).values({
-      personId,
-      title: visionTitle(answer),
-      detail: answer,
-      horizon,
-      owner: personName,
-      source: 'vision',
-      sourceSubmissionId: submissionId,
-      createdCycleLabel: currentCycleLabel(),
-      sortOrder,
-    });
+    const inserted = await tx
+      .insert(goals)
+      .values({
+        personId,
+        title: visionTitle(answer),
+        detail: answer,
+        horizon,
+        owner: personName,
+        // Private until its owner decides otherwise. See the doc comment.
+        isPrivate: true,
+        source: 'vision',
+        sourceSubmissionId: submissionId,
+        createdCycleLabel: currentCycleLabel(),
+        sortOrder,
+      })
+      .returning({ id: goals.id });
+    made.push({ id: inserted[0].id, title: visionTitle(answer) });
   }
+  return made;
 }
 
 export { applyVision };

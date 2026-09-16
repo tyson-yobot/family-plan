@@ -96,7 +96,7 @@ export function WeekView({
           habit to it, and it will show up here with seven boxes to tick.
         </p>
         <p className="mt-3 text-[13px] leading-relaxed text-[var(--ink-soft)]">
-          Only you ever sees this. Nobody in the house can see which days you ticked.
+          Only you can see this. Nobody in the house can see which days you ticked.
         </p>
       </div>
     );

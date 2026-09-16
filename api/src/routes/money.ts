@@ -101,12 +101,29 @@ async function moneyUnlocked(
       .send({ error: 'Enter your money passphrase.', code: 'passphrase_required' });
     return null;
   }
+  /*
+   * Scoped to THIS person, not merely to a live token.
+   *
+   * The first version matched on the token hash and the expiry alone, and
+   * `personId` was written on the row and never read. That made the gate ask
+   * "is the caller an adult, and does somebody hold a live money token", which
+   * is a different question from the one this file claims to ask. Both adults
+   * share a household iPad: Tyson unlocks the money area, signs out, hands it
+   * over, Danyell signs in with her own four-digit code, and his still-live
+   * money token in that tab opens the bank for her without her ever setting or
+   * typing a passphrase. The whole "each adult sets their own" design was not
+   * enforced by anything.
+   *
+   * Found by a cold review of the diff, not by the test suite, which never
+   * exercised two adults on one device.
+   */
   const rows = await db
     .select({ id: moneySessions.id })
     .from(moneySessions)
     .where(
       and(
         eq(moneySessions.tokenHash, await hashSessionToken(token)),
+        eq(moneySessions.personId, person.id),
         gt(moneySessions.expiresAt, new Date()),
       ),
     )
@@ -257,6 +274,15 @@ export function registerMoneyRoutes(app: FastifyInstance) {
     return { ok: true, money_session: token, expires_at: expiresAt.toISOString() };
   });
 
+  /**
+   * Locking the money area again.
+   *
+   * The ONE route in this file that does not run both gates, deliberately.
+   * Holding the money token is the only thing it needs, because all it does is
+   * destroy that token: somebody who has it can always stop using it, and
+   * refusing to let a half-expired session lock itself would leave the row
+   * alive for its full fifteen minutes. It cannot read anything.
+   */
   app.post('/api/money/lock', async (request) => {
     const token = bearer(request);
     if (token) {
@@ -395,11 +421,6 @@ export function registerMoneyRoutes(app: FastifyInstance) {
     const outcome = await syncBank();
     return { ok: outcome.ok, error: outcome.error ?? null, view: await moneyView() };
   });
-}
-
-/** Whether this person should be shown a money area at all. */
-export async function moneyAreaAppliesTo(person: Person): Promise<boolean> {
-  return person.templateType === 'adult';
 }
 
 export { MONEY_SESSION_MINUTES, MIN_PASSPHRASE };

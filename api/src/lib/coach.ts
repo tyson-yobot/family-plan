@@ -231,7 +231,16 @@ function systemPrompt(context: CoachContext): string {
   ].join('\n');
 }
 
-/** The shape the model has to answer in, so accepting a step can be a button. */
+/**
+ * The shape the model has to answer in, so accepting a step can be a button.
+ *
+ * Every field is a plain string and "no step" is the empty string rather than
+ * null. A union type written as `type: ['string', 'null']` is not a shape the
+ * structured-output support is documented to take, and if it were rejected the
+ * request would 400, the catch below would swallow it, and the coach would be
+ * silently dead for ever with nothing on any screen saying so. A plain string
+ * cannot fail that way, and an empty string is unambiguous.
+ */
 const RESPONSE_FORMAT = {
   type: 'json_schema' as const,
   schema: {
@@ -242,13 +251,13 @@ const RESPONSE_FORMAT = {
         description: 'Three or four sentences, under 90 words, addressed to them directly.',
       },
       step: {
-        type: ['string', 'null'],
+        type: 'string',
         description:
-          'One small concrete step doable within a week, or null if nothing genuine presents itself.',
+          'One small concrete step doable within a week. An empty string if nothing genuine presents itself.',
       },
       step_goal_id: {
-        type: ['string', 'null'],
-        description: 'The id of the open goal the step belongs under, or null.',
+        type: 'string',
+        description: 'The id of the open goal the step belongs under, or an empty string.',
       },
     },
     required: ['note', 'step', 'step_goal_id'],
@@ -275,7 +284,18 @@ export async function writeNote(context: CoachContext): Promise<CoachDraft | nul
 
     const response = await client.messages.create({
       model: COACH_MODEL,
-      max_tokens: 2000,
+      /*
+       * Room for the thinking as well as the four sentences.
+       *
+       * Thinking is ON BY DEFAULT on this model, which is a change from the
+       * previous generation, and thinking tokens come out of this same ceiling.
+       * At 2,000 a long month of answers could hit the cap, truncate the JSON
+       * mid-object, throw in the parse below, and be swallowed by the catch. The
+       * person would then sit on "Writing you something" for ever and no error
+       * would exist anywhere. 16,000 is the documented default for a
+       * non-streaming request and the output itself is under 90 words.
+       */
+      max_tokens: 16000,
       output_config: {
         effort: COACH_EFFORT,
         format: RESPONSE_FORMAT,
@@ -300,6 +320,20 @@ export async function writeNote(context: CoachContext): Promise<CoachDraft | nul
     // no note at all rather than a note saying something went wrong.
     if (response.stop_reason === 'refusal') return null;
 
+    /*
+     * Hitting the ceiling is NOT a legitimate outcome, and it must not look
+     * like one.
+     *
+     * A truncated response would otherwise fail in JSON.parse below and be
+     * swallowed by the same catch that handles "the model was unreachable",
+     * making a fixable bug indistinguishable from a quiet day. Checked
+     * explicitly so it lands in the log as itself.
+     */
+    if (response.stop_reason === 'max_tokens') {
+      console.error('coach: response hit max_tokens and was discarded; raise the ceiling');
+      return null;
+    }
+
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
       .map((block) => block.text)
@@ -315,7 +349,8 @@ export async function writeNote(context: CoachContext): Promise<CoachDraft | nul
     const body = typeof parsed.note === 'string' ? parsed.note.trim() : '';
     if (body === '') return null;
 
-    const step = typeof parsed.step === 'string' && parsed.step.trim() !== '' ? parsed.step.trim() : null;
+    const step =
+      typeof parsed.step === 'string' && parsed.step.trim() !== '' ? parsed.step.trim() : null;
 
     /*
      * The goal id is checked against THIS person's own open goals rather than
@@ -324,7 +359,10 @@ export async function writeNote(context: CoachContext): Promise<CoachDraft | nul
      * own. Anything unrecognised becomes a step with no goal attached, which is
      * still useful and cannot touch anybody else's board.
      */
-    const wantedGoal = typeof parsed.step_goal_id === 'string' ? parsed.step_goal_id : null;
+    const wantedGoal =
+      typeof parsed.step_goal_id === 'string' && parsed.step_goal_id.trim() !== ''
+        ? parsed.step_goal_id.trim()
+        : null;
     const suggestedGoalId =
       wantedGoal && context.openGoals.some((goal) => goal.id === wantedGoal) ? wantedGoal : null;
 

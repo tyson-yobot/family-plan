@@ -432,6 +432,15 @@ export async function signIn(token: string, slug: string, code: string): Promise
 export async function signOut(): Promise<void> {
   const session = readSession();
   clearSession();
+  /*
+   * The money session goes with it.
+   *
+   * Without this, signing out left a live money token in sessionStorage for the
+   * rest of its fifteen minutes. On a shared household device the next person
+   * to sign in with their own code inherited it. Clearing it here is the
+   * client half; the server half is the personId check in moneyUnlocked.
+   */
+  clearMoneySession();
   if (!session) return;
   try {
     await fetch(apiUrl('/api/space/signout'), {

@@ -446,9 +446,12 @@ export const spendingCaps = pgTable('spending_caps', {
 /**
  * A household rule for categorising a transaction SimpleFIN did not categorise.
  *
- * Applied GOING FORWARD only, never retrospectively. A rule that rewrote
- * history would silently change last month's totals underneath a number
- * somebody had already looked at and made a decision about.
+ * Applied across the whole pulled window, so it DOES change the last three
+ * months and not only the future. An earlier version of this comment claimed
+ * the opposite; the comment was wrong about the code, and re-categorising is
+ * the behaviour that was actually wanted. Somebody writing a rule while looking
+ * at a pile of uncategorised spending means that pile. See categorise() in
+ * lib/money.ts for the full reasoning and for what had to change alongside it.
  */
 export const categoryRules = pgTable('category_rules', {
   id: uuid('id').primaryKey().defaultRandom(),

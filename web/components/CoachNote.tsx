@@ -146,13 +146,24 @@ export function CoachNote({
           Not "private" on its own, which a child can read as "special": it says
           who can see it, which is the fact that matters.
         */}
-        <p className="kicker text-[11.5px]">Just for you. Nobody else can see this.</p>
+        <p className="kicker text-[11.5px]">Just for you. Nobody in the house can see this.</p>
       </div>
 
       <p className="mt-3 whitespace-pre-line text-[15px] leading-relaxed">{note.body}</p>
 
-      <p className="mt-3 text-[12px] text-[var(--ink-soft)]">
-        Written after your {monthName(note.cycle_label)} check-in.
+      {/*
+        Says who wrote it, and the claim above is now "nobody in the house"
+        rather than "nobody else".
+        The original said nobody else could see it, which was not true: the
+        answers are sent to Anthropic's API to write this. Nobody in the
+        household can see it, which is the promise that was actually made and
+        the one that is kept. Saying a computer wrote it also matters on a
+        child's screen, because otherwise an eleven year old reasonably assumes
+        a parent did, and that changes what they are willing to write next month.
+      */}
+      <p className="mt-3 text-[12px] leading-relaxed text-[var(--ink-soft)]">
+        Written for you by the app after your {monthName(note.cycle_label)} check-in. A computer
+        wrote it, not anyone in the house, and nobody here can read it.
       </p>
 
       {note.suggested_step ? (

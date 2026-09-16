@@ -213,6 +213,17 @@ export async function toggleHabitDay(
     await db.delete(habitLogs).where(eq(habitLogs.id, existing[0].id));
     return { ok: true, done: false };
   }
-  await db.insert(habitLogs).values({ goalId: goal.id, personId, logDate: day });
+  /*
+   * onConflictDoNothing, because the select above and this insert are not one
+   * atomic step. A double tap that beats the screen's own busy flag, or the same
+   * tap from two devices, makes both requests see no row and both insert; the
+   * second would violate the unique index on (goal_id, log_date) and come back
+   * as a 500 on what is meant to be the lightest interaction in the app.
+   * Landing on "it is ticked" either way is the correct outcome.
+   */
+  await db
+    .insert(habitLogs)
+    .values({ goalId: goal.id, personId, logDate: day })
+    .onConflictDoNothing();
   return { ok: true, done: true };
 }

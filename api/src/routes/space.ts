@@ -405,11 +405,24 @@ export function registerSpaceRoutes(app: FastifyInstance) {
           .insert(goalSteps)
           .values({ goalId, personId: person.id, title: note.suggestedStep, sortOrder });
       } else {
-        // No goal to hang it under, so it becomes a small goal of its own with
-        // the step as its first action. Better than dropping it on the floor.
+        /*
+         * No goal to hang it under, so it becomes a small goal of its own.
+         *
+         * PRIVATE, and this is not a detail. The step was written by reading
+         * that person's scores, the sentences behind them and their note to
+         * self, so its wording can carry the substance of all three. The card
+         * they tapped it from says "Just for you. Nobody else can see this",
+         * and a tap under that sentence must not publish anything to the other
+         * four.
+         *
+         * The other branch, where the step lands under an existing goal, is
+         * already safe: step WORDING is not on the family allow-list, only the
+         * count is.
+         */
         await addGoal(person.id, {
           title: note.suggestedStep,
           owner: person.name,
+          isPrivate: true,
           source: 'coach',
         });
       }
@@ -576,13 +589,22 @@ export function registerSpaceRoutes(app: FastifyInstance) {
       return { ok: false, error: 'A goal cannot hang off itself.' };
     }
     const found = await db
-      .select({ id: goals.id, horizon: goals.horizon })
+      .select({ id: goals.id, horizon: goals.horizon, status: goals.status })
       .from(goals)
       .where(and(eq(goals.id, parentId), eq(goals.personId, personId)))
       .limit(1);
     if (!found[0]) return { ok: false, error: 'That bigger goal could not be found.' };
     if (!isLongerThan(found[0].horizon, childHorizon)) {
       return { ok: false, error: 'A goal can only hang off a longer one than itself.' };
+    }
+    /*
+     * And it has to still be open. The screen only ever offers open goals, so
+     * this is reachable through the API or by racing a close in another tab,
+     * but a child hanging off a finished parent would keep feeding that
+     * parent's derived progress after it had ended.
+     */
+    if (found[0].status !== 'open') {
+      return { ok: false, error: 'That bigger goal is already finished.' };
     }
     return { ok: true };
   }

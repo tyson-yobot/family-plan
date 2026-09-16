@@ -49,6 +49,18 @@ export function monthsInQuarter(quarterLabel: string): string[] {
  * description. Anything still unnamed is Uncategorised, which is shown as
  * itself rather than hidden: a large unnamed pile is exactly the thing the
  * adults need to see so they can write a rule for it.
+ *
+ * A NOTE ON "GOING FORWARD", BECAUSE THIS FILE USED TO CLAIM THE OPPOSITE.
+ * A new rule is applied to every transaction in the pulled window, so it does
+ * change the last three months, not just the future. Two comments here and in
+ * the schema said the reverse, and they were simply wrong about the code.
+ *
+ * Re-categorising the window is the RIGHT behaviour and the comments were the
+ * defect: somebody who writes "KROGER is Groceries" while looking at a pile of
+ * uncategorised spending means this month's pile, and a rule that only touched
+ * future months would leave the number they were looking at untouched and look
+ * broken. What must not happen alongside it is the money being counted twice,
+ * which is what `syncBank` now replaces whole months to prevent.
  */
 export function categorise(
   description: string,
@@ -90,12 +102,26 @@ export async function syncBank(now: Date = new Date()): Promise<{ ok: boolean; e
 
   try {
     /*
-     * Ninety days, which covers this month and the quarter around it. Not more:
-     * the retention decision in the schema says only summaries are kept, and
-     * pulling a year every time to throw it away would be a lot of somebody's
-     * financial history crossing the wire for no screen that shows it.
+     * Roughly ninety days, but snapped back to the FIRST DAY OF THAT MONTH.
+     *
+     * Not more than that: the retention decision in the schema says only
+     * summaries are kept, and pulling a year every time to throw it away would
+     * be a lot of somebody's financial history crossing the wire for no screen
+     * that shows it.
+     *
+     * The snapping matters and its absence was a real bug. A plain
+     * now-minus-90-days lands part way through the month three months back, so
+     * that month's rows were rewritten from a partial window: on 15 September
+     * the window began on 17 June, and June's totals, which had been complete
+     * and correct, were overwritten with just 17-30 June. The figure then
+     * shrank a little more every day. Whole months only, so a month is either
+     * rewritten from all of its transactions or left alone.
      */
-    const since = Math.floor(now.getTime() / 1000) - 90 * 24 * 60 * 60;
+    const rough = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const oldestMonth = currentCycleLabel(rough);
+    const [oy, om] = oldestMonth.split('-').map(Number);
+    const windowStart = new Date(Date.UTC(oy, om - 1, 1));
+    const since = Math.floor(windowStart.getTime() / 1000);
     const pull = await pullSince(since);
 
     const rules = await db
@@ -123,34 +149,43 @@ export async function syncBank(now: Date = new Date()): Promise<{ ok: boolean; e
       }
     }
 
-    for (const [cycle, byCategory] of totals) {
-      for (const [category, at] of byCategory) {
-        const rounded = at.spent.toFixed(2);
-        const existing = await db
-          .select({ id: spendingByCategory.id })
-          .from(spendingByCategory)
-          .where(
-            and(
-              eq(spendingByCategory.cycleLabel, cycle),
-              eq(spendingByCategory.category, category),
-            ),
-          )
-          .limit(1);
-        if (existing[0]) {
-          await db
-            .update(spendingByCategory)
-            .set({ spent: rounded, transactionCount: at.count, updatedAt: now })
-            .where(eq(spendingByCategory.id, existing[0].id));
-        } else {
-          await db.insert(spendingByCategory).values({
+    /*
+     * Every month in the window is REPLACED, not merged into.
+     *
+     * This was the worst bug in the money work and it would have shown a number
+     * roughly double the truth the first time anybody used the category-rule
+     * feature it ships with. The first version updated a row if it existed and
+     * inserted otherwise, and never deleted a row that stopped receiving
+     * transactions. So the screen showing "Uncategorised $842" plus a new rule
+     * sending those payments to Groceries produced "Uncategorised $842" AND
+     * "Groceries $842": the same money twice, a doubled monthly total, an
+     * inflated quarter and a wrong saved-so-far against the baseline.
+     *
+     * The same thing happened with no rule at all, whenever SimpleFIN enriched
+     * a pending transaction's category between two pulls, or a pending
+     * transaction was cancelled.
+     *
+     * Replacing the whole month is the only version that is correct under
+     * re-categorisation, and it is safe because every month in the window is
+     * pulled in full (see the snapping above). One transaction per month so
+     * that a failure cannot leave a month half-deleted and reading as zero.
+     */
+    const monthsPulled = [...totals.keys()];
+    for (const cycle of monthsPulled) {
+      const byCategory = totals.get(cycle);
+      if (!byCategory) continue;
+      await db.transaction(async (tx) => {
+        await tx.delete(spendingByCategory).where(eq(spendingByCategory.cycleLabel, cycle));
+        for (const [category, at] of byCategory) {
+          await tx.insert(spendingByCategory).values({
             cycleLabel: cycle,
             category,
-            spent: rounded,
+            spent: at.spent.toFixed(2),
             transactionCount: at.count,
             updatedAt: now,
           });
         }
-      }
+      });
     }
 
     await db
