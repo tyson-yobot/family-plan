@@ -4,8 +4,10 @@ Last updated 2026-09-15.
 
 ## Where it is
 
-One link for the house, a code each, and a goal board behind it. Built,
-deployed and walked end to end against the running system.
+One link for the house, a code each, a goal board behind it, a weekly row to
+tick, four horizons that connect, a private note after each check-in, and an
+adults-only money area. Built, deployed and walked end to end against the
+running system.
 
 ## Live addresses
 
@@ -66,13 +68,60 @@ is still open rather than about whatever was written down last month.
 against it, condensed display type for headers and the finish. Every colour pair
 re-measured from scratch; none of the old cream-page measurements carried over.
 
-## What is deliberately not built
+**Mission 2**, the depth pass. Five changes, all live.
 
-The Week screen, money tracking, the horizons chain and the coach are Mission 2.
-The goal table already carries the columns they need (`parent_goal_id`,
-`weekly_habit`, `weekly_target_count`, `target_number`, `target_unit`,
-`progress_number`, `life_area`) and there is a `habit_logs` table waiting, so
-those are screens rather than a schema change under a live board.
+*Four horizons, connected.* Ten years, three years, one year and the ninety-day
+goals. The three "Where I am going" answers become real horizon goals rather
+than saved text, one per horizon per person, edited rather than duplicated when
+somebody rewrites them. A ninety-day goal can hang off a longer one, and the
+longer one shows progress counted from its children rather than typed. Those
+vision goals are created PRIVATE, unlike every other goal: they are the first
+sentence of a paragraph somebody wrote under a promise that what they write is
+theirs alone, and their owner can share any of them with one tap.
+
+*A weekly drumbeat.* A goal can carry a weekly habit with a seven-day row to
+tick, a run of weeks behind it, and a nudge that says nothing for a fortnight
+and then says one warm line. No percentage and no comparison to anybody, because
+three of the five people are children. Every tick is private to its owner.
+
+*Goal areas, separate from the scored areas.* Exercise and athletics for teens
+and young adults, athletics for adults. Friendships was not added to either
+child tier because both already had it under another name. These are filed
+against, never scored, and the check-in did not change.
+
+*A private coach.* After a check-in, a few sentences written for that person
+about what they wrote, on Claude Opus 5, about 35 cents a month at five people.
+It reads one person's data and nothing else, never grades, and can offer one
+small step that only reaches the board if they tap it. It is started after the
+check-in has committed and is never awaited, so a model that is down costs
+nobody their answers.
+
+*The money area.* Adults only, absent rather than hidden on a child's side,
+behind a second passphrase of at least twelve characters in its own header with
+a fifteen-minute session. Spending by category against caps, a quarterly cut
+target, and the app naming the one category costing most against its cap and for
+how many months. Read-only for ever. Pulled from SimpleFIN four times a day on a
+timer, never on a page load, and only summaries are kept: transactions are
+totalled and discarded.
+
+*And the birthday rule is gone*, on Tyson's decision: storing five dates of
+birth, three of them a child's, to block a few hundred codes was the wrong
+trade. The column is out of the schema; the physical drop is pending in
+`scripts/pending/`.
+
+## Not configured yet, so honest-degrading
+
+Two features are built and shipped but have no credential in production, and
+both say so on screen rather than pretending:
+
+- `SIMPLEFIN_ACCESS_URL` unset, so the money screens say the bank is not
+  connected and show no figures.
+- `ANTHROPIC_API_KEY` unset, so no coach note is written and the screen says
+  nothing rather than inventing one.
+
+Both are Railway variables on the `api` service.
+
+## What is deliberately not built
 
 No email, no reminders, no chore integration, no scheduling engine.
 
@@ -91,9 +140,18 @@ No email, no reminders, no chore integration, no scheduling engine.
   knew about and the first thing through it was a route this release deleted: an
   old bookmark to `/api/form/<token>` put a live token into Railway's logs. See
   `redactPath` in `api/src/server.ts`.
-- **The preview walk needs its own database and its own API.** Both were built
-  for this pass and then deleted; the recipe is in
-  `docs/CONTINUATION-2026-09-15-mission-1.md`.
+- **The preview walk needs its own database and its own API.** The recipe is in
+  `docs/CONTINUATION-2026-09-15-mission-1.md`. **Both are still up and still
+  need removing**: the Railway service `api-preview` and the
+  `family_plan_preview` database. Deleting the service was refused by the
+  permission layer during Mission 2 and was not worked around. See the end of
+  `docs/CONTINUATION-2026-09-15-mission-2.md`.
+- **Goal areas are NOT the scored areas.** Adding to a tier's scored list adds a
+  QUESTION to the check-in and breaks every half-finished draft. `goalAreasFor()`
+  is the list a goal is filed under. The drift check covers both pairs.
+- **`x-money-session` must stay in the CORS `allowedHeaders`** or the money area
+  fails on every phone with an opaque "Failed to fetch" while every server-side
+  test still passes.
 - The Vercel project's root directory is `web`, so `vercel deploy` is run from
   the repo root, not from `web/`.
 - The database is reachable from a laptop through a Railway TCP proxy on the
